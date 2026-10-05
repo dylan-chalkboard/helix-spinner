@@ -1,0 +1,15 @@
+{
+  "name": "helix-spinner",
+  "description": "A whimsical animated spinner mod for Claude Code",
+  "owner": {
+    "name": "dylan-chalkboard"
+  },
+  "plugins": [
+    {
+      "name": "helix-spinner",
+      "source": "./plugins/helix-spinner",
+      "description": "Replaces the spinner row with a twisting braille helix, a wacky verb and the turn's time and tokens",
+      "version": "1.0.0"
+    }
+  ]
+}

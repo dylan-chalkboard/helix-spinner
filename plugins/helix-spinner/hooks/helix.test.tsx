@@ -1,0 +1,193 @@
+import { describe, expect, mock, test } from 'claude-code/testing'
+
+import { dividerLine, heatFor } from './helix'
+import { drawVerb, toPastTense, VERBS_BY_MODE, WACKY_VERBS } from './words'
+
+const SPINNER = { word: 'Sauteing', message: null, suffix: '…', mode: 'thinking' } as const
+
+const rowText = async (ui: { findAll: (q: { type: string; in: string }) => Promise<readonly { text?: string }[]> }) =>
+  (await ui.findAll({ type: 'Text', in: 'helix' }))
+    .map(t => t.text ?? '')
+    .join('')
+    .replace(/^[─━]+/, '')
+
+describe('helix spinner', () => {
+  for (const surface of ['terminal', 'desktop'] as const) {
+    test(`draws one animated row with a wacky verb on ${surface}`, async ($, on) => {
+      mock.store(on)
+      const ui = await $.ui.mount({ plugin: 'helix-spinner', surface, component: 'Spinner', props: SPINNER })
+
+      const firstFrame = await rowText(ui)
+      const verbs = WACKY_VERBS.map(v => v.replace(/[-]/g, '\\-')).join('|')
+      expect(firstFrame).toMatch(new RegExp(`^[\\u2800-\\u28ff]{12} (${verbs})… \\(\\d+s\\)(  ⎿  (Tip|Fun fact|Tech history|Reminder): .+  next ›)?$`))
+      expect(firstFrame).not.toContain('Sauteing')
+
+      await ui.advance(400)
+      expect(await rowText(ui)).not.toBe(firstFrame)
+
+      await ui.redraw({ ...SPINNER, mode: 'tool-use' })
+      const toolVerbs = (VERBS_BY_MODE['tool-use'] ?? []).map(v => v.replace(/[-]/g, '\\-')).join('|')
+      expect(await rowText(ui)).toMatch(new RegExp(` (${toolVerbs})… `))
+
+      await ui.redraw({ ...SPINNER, message: 'Compacting conversation…', mode: 'tool-use' })
+      expect(await rowText(ui)).toContain('Compacting conversation… (')
+      await ui.unmount()
+    })
+  }
+
+  test('each state draws its own animation', async $ => {
+    const modes = ['thinking', 'requesting', 'responding', 'tool-input', 'tool-use'] as const
+    const frames = new Set<string>()
+    for (const mode of modes) {
+      const ui = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Spinner', props: { ...SPINNER, mode } })
+      await ui.advance(400)
+      frames.add((await rowText(ui)).slice(0, 12))
+      await ui.unmount()
+    }
+    expect(frames.size).toBe(modes.length)
+  })
+
+  test('the demo pane shows every animation and the heat stages', async $ => {
+    const ui = await $.ui.mount({
+      plugin: 'helix-spinner',
+      surface: 'terminal',
+      component: 'Pane',
+      requestId: 'helix-demo',
+      props: { bodyColumns: 60, bodyRows: 20 } as never,
+    })
+    for (const label of ['Thinking', 'Requesting', 'Responding', 'Preparing a tool call', 'Running a tool', 'Heating up (75s)']) {
+      expect(await ui.find({ key: `demo-${label}` })).toBeDefined()
+    }
+    await ui.unmount()
+  })
+
+  test('turns heat up after 30s', () => {
+    expect(heatFor(10_000)).toBe(0)
+    expect(heatFor(75_000)).toBe(0.5)
+    expect(heatFor(300_000)).toBe(1)
+  })
+
+  test('verbs turn past tense for the end-of-turn line', () => {
+    expect(toPastTense('Hornswoggling')).toBe('Hornswoggled')
+    expect(toPastTense('Latke-frying')).toBe('Latke-fried')
+    expect(toPastTense('Waxing-poetic')).toBe('Waxed-poetic')
+    expect(toPastTense('Okey-dokeying')).toBe('Okey-dokeyed')
+    expect(toPastTense('Ringing-the-bell')).toBe('Rang-the-bell')
+    expect(toPastTense('Lickety-splitting')).toBe('Lickety-split')
+    for (const verb of WACKY_VERBS) {
+      expect(toPastTense(verb)).not.toMatch(/ing$/)
+    }
+  })
+
+  test('the end-of-turn line gets a wacky past-tense verb', async ($, on) => {
+    on('ui.render', { component: 'TurnDuration' }, ($, e) => {
+      const { Text } = $.ui.resolve(e)
+      return <Text>{e.props.word} for 3s</Text>
+    })
+    const ui = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'TurnDuration', props: { word: 'Baked', durationMs: 3000 } })
+    const past = WACKY_VERBS.map(v => toPastTense(v).replace(/[-]/g, '\\-')).join('|')
+    expect(await ui.find({ type: 'Text', text: new RegExp(`^(${past}) for 3s$`) })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('a verb seen for the first time joins the dex', async ($, on) => {
+    mock.store(on)
+    const ui = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Spinner', props: SPINNER })
+    await ui.advance(100)
+
+    const dexPane = await $.ui.mount({
+      plugin: 'helix-spinner',
+      surface: 'terminal',
+      component: 'Pane',
+      requestId: 'helix-dex',
+      props: { bodyColumns: 60, bodyRows: 30 } as never,
+    })
+    expect(await dexPane.find({ type: 'Text', text: /^1\/\d+ found · 0\/20 rare · 0 shiny$/ })).toBeDefined()
+    await dexPane.unmount()
+    await ui.unmount()
+  })
+
+  test('rare verbs and shinies stay rare', () => {
+    let rare = 0
+    let shiny = 0
+    for (let seed = 0; seed < 50_000; seed++) {
+      const { rarity } = drawVerb('thinking', `turn-${seed}:0`)
+      rare += rarity === 'rare' ? 1 : 0
+      shiny += rarity === 'shiny' ? 1 : 0
+    }
+    expect(rare).toBeGreaterThan(150)
+    expect(rare).toBeLessThan(700)
+    expect(shiny).toBeGreaterThan(15)
+    expect(shiny).toBeLessThan(110)
+  })
+
+  test('alerts start off and the button cycles all, rare & shiny only, off', async ($, on) => {
+    mock.store(on)
+    const pane = await $.ui.mount({
+      plugin: 'helix-spinner',
+      surface: 'terminal',
+      component: 'Pane',
+      requestId: 'helix-dex',
+      props: { bodyColumns: 60, bodyRows: 30 } as never,
+    })
+    const label = async () => (await pane.find({ key: 'alerts' }))?.text
+    expect(await label()).toBe('Off')
+    await pane.press({ key: 'alerts' })
+    expect(await label()).toBe('All')
+    await pane.press({ key: 'alerts' })
+    expect(await label()).toBe('Rare & shiny only')
+    await pane.press({ key: 'alerts' })
+    expect(await label()).toBe('Off')
+    await pane.unmount()
+  })
+
+  test('a tip, fact or reminder shows under the row and can be switched off', async ($, on) => {
+    mock.store(on)
+    const ui = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Spinner', props: SPINNER })
+    expect(await ui.find({ type: 'Text', text: '  ⎿  ', in: 'helix' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^(Tip|Fun fact|Tech history|Reminder):$/, in: 'helix' })).toBeDefined()
+
+    const pane = await $.ui.mount({
+      plugin: 'helix-spinner',
+      surface: 'terminal',
+      component: 'Pane',
+      requestId: 'helix-dex',
+      props: { bodyColumns: 60, bodyRows: 30 } as never,
+    })
+    expect((await pane.find({ key: 'tips' }))?.text).toBe('On')
+    await pane.press({ key: 'tips' })
+    expect((await pane.find({ key: 'tips' }))?.text).toBe('Off')
+    expect(await ui.find({ type: 'Text', text: '  ⎿  ', in: 'helix' })).toBeUndefined()
+    await pane.unmount()
+    await ui.unmount()
+  })
+
+  test('clicking the tip line skips to the next one', async ($, on) => {
+    mock.store(on)
+    const ui = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Spinner', props: SPINNER })
+    const tipText = async () => (await ui.findAll({ type: 'Text', in: 'helix' })).map(t => t.text ?? '').join('').split('⎿')[1]
+    const before = await tipText()
+    await ui.pointer({ type: 'down', x: 4, y: 2, button: 'left' })
+    const after = await tipText()
+    expect(after).toBeDefined()
+    expect(after).not.toBe(before)
+    await ui.pointer({ type: 'down', x: 4, y: 1, button: 'left' })
+    expect(await tipText()).toBe(after)
+    await ui.unmount()
+  })
+
+  test('a divider line separates the live spinner from the response', async ($, on) => {
+    mock.store(on)
+    const ui = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Spinner', props: SPINNER })
+    await ui.resize({ columns: 40, rows: 3 })
+    expect(await ui.find({ type: 'Text', text: /^[─━]{40}$/, in: 'helix' })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('the divider pulse glides across, then rests', () => {
+    expect(dividerLine(20, 0)).toBe('─'.repeat(20))
+    expect(dividerLine(20, 150 * 10)).toBe('─'.repeat(4) + '━'.repeat(6) + '─'.repeat(10))
+    expect(dividerLine(20, 150 * 40)).toBe('─'.repeat(20))
+    expect(dividerLine(20, 150 * 46)).toBe('─'.repeat(20))
+  })
+})
