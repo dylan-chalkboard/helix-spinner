@@ -190,4 +190,34 @@ describe('helix spinner', () => {
     expect(dividerLine(20, 150 * 40)).toBe('─'.repeat(20))
     expect(dividerLine(20, 150 * 46)).toBe('─'.repeat(20))
   })
+
+  test('after a skip the next tip waits a full 15 seconds', async ($, on) => {
+    mock.store(on)
+    const ui = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Spinner', props: SPINNER })
+    const tipText = async () => (await ui.findAll({ type: 'Text', in: 'helix' })).map(t => t.text ?? '').join('').split('⎿')[1]
+    await ui.advance(10_000)
+    await ui.pointer({ type: 'down', x: 4, y: 2, button: 'left' })
+    const skippedTo = await tipText()
+    await ui.advance(10_000)
+    expect(await tipText()).toBe(skippedTo)
+    await ui.advance(5_500)
+    expect(await tipText()).not.toBe(skippedTo)
+    await ui.unmount()
+  })
+
+  test('the verb showing when the spinner first appears still reaches the dex', async ($, on) => {
+    mock.store(on)
+    const ui = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Spinner', props: { ...SPINNER, mode: 'requesting' } })
+    await ui.advance(100)
+    const dexPane = await $.ui.mount({
+      plugin: 'helix-spinner',
+      surface: 'terminal',
+      component: 'Pane',
+      requestId: 'helix-dex',
+      props: { bodyColumns: 60, bodyRows: 30 } as never,
+    })
+    expect(await dexPane.find({ type: 'Text', text: /^ [█░]+ 1\/\d+$/ })).toBeDefined()
+    await dexPane.unmount()
+    await ui.unmount()
+  })
 })

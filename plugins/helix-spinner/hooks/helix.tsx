@@ -16,7 +16,7 @@ type Props = {
   tipSeed?: number
   divider?: boolean
 }
-type State = { tick: number; mountedAt: number; phase: number; skips: number }
+type State = { tick: number; mountedAt: number; phase: number; tipIndex: number; tipChangedTick: number }
 
 const CELLS = 12
 const DOT_COLUMNS = CELLS * 2
@@ -229,6 +229,11 @@ const sparkle = (t: number, offset: number) => SPARKLES[Math.floor(t * 2 + offse
 // The verbs the live spinner has reported, per instance, so each is posted once.
 const reported = new WeakMap<object, string>()
 
+// The verb on screen now, per instance: posted from the frame timer, once the instance is mounted.
+const showing = new WeakMap<object, { verb: string; rarity: string }>()
+
+const TIP_TICKS = TIP_MS / FRAME_MS
+
 const isSending = (mode: string) => mode === 'requesting'
 
 // ↑ while the request goes up (the context sent), ↓ for what the model has written back.
@@ -254,17 +259,32 @@ const Helix: ClientModule<Props, State> = (props, surface) => {
 
   if (surface.state === undefined) {
     const mountedAt = Date.now()
-    surface.setState({ tick: 0, mountedAt, phase: 0, skips: 0 })
+    surface.setState({ tick: 0, mountedAt, phase: 0, tipIndex: 0, tipChangedTick: 0 })
     surface.every(FRAME_MS, () => {
-      const state = surface.state ?? { tick: 0, mountedAt, phase: 0, skips: 0 }
-      surface.setState({ ...state, tick: state.tick + 1, phase: state.phase + (rates.get(surface) ?? 0.1) })
+      const state = surface.state ?? { tick: 0, mountedAt, phase: 0, tipIndex: 0, tipChangedTick: 0 }
+      const tick = state.tick + 1
+      const isTipDue = tick - state.tipChangedTick >= TIP_TICKS
+      surface.setState({
+        ...state,
+        tick,
+        phase: state.phase + (rates.get(surface) ?? 0.1),
+        tipIndex: isTipDue ? state.tipIndex + 1 : state.tipIndex,
+        tipChangedTick: isTipDue ? tick : state.tipChangedTick,
+      })
+
+      const current = showing.get(surface)
+      const sighting = current ? `${current.verb}:${current.rarity}` : null
+      if (current && sighting && reported.get(surface) !== sighting) {
+        reported.set(surface, sighting)
+        surface.post(current)
+      }
     })
-    // A click anywhere on the tip line moves on to the next one.
+    // A click anywhere on the tip line moves on to the next one and restarts its 15 seconds.
     surface.onPointer(event => {
       const state = surface.state
       const isTipLineClick = event.type === 'down' && event.y === (tipRows.get(surface) ?? 1)
       if (state && isTipLineClick) {
-        surface.setState({ ...state, skips: state.skips + 1 })
+        surface.setState({ ...state, tipIndex: state.tipIndex + 1, tipChangedTick: state.tick })
       }
     })
   }
@@ -278,10 +298,10 @@ const Helix: ClientModule<Props, State> = (props, surface) => {
 
   const rarity = props.rarity ?? 'common'
   const agentCount = props.agents ?? 0
-  const sighting = props.collect ? `${props.collect}:${rarity}` : null
-  if (sighting && reported.get(surface) !== sighting) {
-    reported.set(surface, sighting)
-    surface.post({ verb: props.collect ?? '', rarity })
+  if (props.collect) {
+    showing.set(surface, { verb: props.collect, rarity })
+  } else {
+    showing.delete(surface)
   }
 
   const cells = drawFrame(motion, phase, fever, agentCount)
@@ -295,7 +315,7 @@ const Helix: ClientModule<Props, State> = (props, surface) => {
   }
 
   const tips = props.tips ?? []
-  const tip = tips.length > 0 ? tips[(Math.floor(elapsedMs / TIP_MS) + (props.tipSeed ?? 0) + (surface.state?.skips ?? 0)) % tips.length] : undefined
+  const tip = tips.length > 0 ? tips[((surface.state?.tipIndex ?? 0) + (props.tipSeed ?? 0)) % tips.length] : undefined
 
   tipRows.set(surface, props.divider ? 2 : 1)
   const dividerWidth = surface.columns > 0 ? surface.columns : FALLBACK_COLUMNS
