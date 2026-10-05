@@ -11,6 +11,10 @@ export const VERBS_BY_MODE: Record<string, readonly string[]> = {
     'Muddling', 'Ponderfuffling', 'Tea-leaf-reading', 'Marshmallow-musing', 'Sock-sorting', 'Doodlebugging',
     'Whimwhamming', 'Snoozle-thinking', 'Mind-pretzeling', 'Thought-juggling', 'Yarn-unspooling', 'Daisy-plucking',
     'Cuckoo-clocking', 'Jellybean-counting',
+    'Theorycrafting', 'Min-maxing', 'Strat-plotting', 'Save-scumming', 'Wiki-checking', 'Puzzle-solving',
+    'Pause-menuing', 'Skill-tree-pondering', 'Cutscene-watching', 'Boss-pattern-studying',
+    'Redstone-engineering', 'Enderman-staring', 'Jungle-pathing', 'Minimap-checking', 'Eco-rounding', 'Bonfire-resting',
+    'Git-gudding',
   ],
   requesting: [
     'Skedaddling', 'Gallivanting', 'Moseying', 'Hobnobbing', 'Schmoozing', 'Lickety-splitting',
@@ -22,6 +26,10 @@ export const VERBS_BY_MODE: Record<string, readonly string[]> = {
     'Hopscotching', 'Tiptoeing', 'Bunny-hopping', 'Pogo-sticking', 'Hot-air-ballooning', 'Cartwheeling',
     'Message-in-a-bottling', 'Owl-posting', 'Skipping-stones', 'Kite-flying', 'Rollerskating', 'Sleigh-riding',
     'Tumbleweeding', 'Butterfly-chasing', 'Bumblebee-buzzing', 'Gondola-gliding', 'Unicycling', 'Hippity-hopping',
+    'Fast-traveling', 'Warp-piping', 'Wall-jumping', 'Double-jumping', 'Respawning', 'Air-dashing',
+    'Ledge-grabbing', 'Speedrunning', 'Kart-drifting', 'Lag-spiking',
+    'Battle-bus-dropping', 'Storm-dodging', 'Nether-portaling', 'Warthog-jumping', 'Rushing-B', 'Tower-diving',
+    'Vent-hopping', 'Air-dribbling', 'Boost-stealing',
   ],
   responding: [
     'Jibber-jabbering', 'Yammering', 'Chortling', 'Bloviating', 'Gobbledygooking', 'Razzle-dazzling',
@@ -35,6 +43,9 @@ export const VERBS_BY_MODE: Record<string, readonly string[]> = {
     'Harrumphing', 'Tittle-tattling', 'Poppycocking', 'Balderdashing', 'Limericking', 'Rhyme-weaving',
     'Fairy-tale-telling', 'Hee-hawing', 'Whistling-dixie', 'Sing-songing', 'Yarn-spinning', 'Chuckle-sputtering',
     'Glee-clubbing', 'Ballyhooing',
+    'Trash-talking', 'Hey-listening', 'Lore-dumping', 'Text-boxing', 'Victory-dancing', 'Emoting',
+    'Achievement-unlocking', 'Leveling-up', 'High-scoring', 'Cutscening',
+    'Flossing', 'Default-dancing', 'Victory-royaling', 'Cortana-chatting', 'GG-typing', 'All-chatting', 'Villager-hmming',
   ],
   'tool-input': [
     'Finagling', 'Fiddle-faddling', 'Thingamajigging', 'Whatchamacalliting', 'Rigmaroling',
@@ -46,6 +57,9 @@ export const VERBS_BY_MODE: Record<string, readonly string[]> = {
     'Glue-gunning', 'Duct-taping', 'Sprocket-spinning', 'Gear-greasing', 'Thimble-threading', 'Button-mashing',
     'Origami-folding', 'Lego-stacking', 'Pipe-cleanering', 'Sequin-sewing', 'Pinwheel-pinning', 'Doodad-polishing',
     'Clockwork-winding', 'Trinket-tinkering', 'Paperclip-bending', 'Snowglobe-shaking', 'Gadget-gizmoing', 'Whatsit-wiggling',
+    'Loadout-tweaking', 'Inventory-tetrising', 'Crafting', 'Respeccing', 'Gear-swapping', 'Cartridge-blowing',
+    'Controller-calibrating', 'Hotkey-binding', 'Mod-installing', 'Character-creating',
+    'Block-placing', 'Box-building', 'Ward-placing', 'Bomb-planting', 'Spray-pattern-practicing',
   ],
   'tool-use': [
     'Hornswoggling', 'Kerplunking', 'Kablooeying', 'Spelunking', 'Snorkeling', 'Shenaniganing',
@@ -59,6 +73,12 @@ export const VERBS_BY_MODE: Record<string, readonly string[]> = {
     'Jack-in-the-boxing', 'Firework-fizzing', 'Slinky-slinking', 'Yo-yoing', 'Bumper-carring', 'Whoopee-cushioning',
     'Jelly-wobbling', 'Pinball-wizarding', 'Rollercoastering', 'Boing-boinging', 'Fizzbanging', 'Ker-sploshing',
     'Zippity-zapping', 'Whizzbanging',
+    'Boss-fighting', 'Loot-goblining', 'Dungeon-crawling', 'XP-grinding', 'Spawn-camping', 'Cheesing',
+    'Rage-quitting', 'Headshotting', 'Mushroom-stomping', 'Coin-collecting', 'Combo-breaking', 'Hadoukening',
+    'Creeper-dodging', 'Diamond-mining', 'Goomba-stomping', 'Koopa-shell-kicking', 'Star-powering', 'Cranking-90s',
+    'Spartan-lasering', 'Plasma-sticking', 'Energy-swording', 'Quickscoping', 'No-scoping', 'Killstreaking',
+    'Musty-flicking', 'Flip-resetting', 'Demoing', 'Last-hitting', 'Ganking', 'Baron-stealing',
+    'Jiggle-peeking', 'AWPing', 'Defusing', 'T-spinning', 'Pokéball-throwing', 'Power-pelleting',
   ],
 }
 
@@ -71,6 +91,8 @@ export const RARE_VERBS = [
   'Wizard-dueling', 'Kraken-tickling', 'Volcano-surfing', 'Yeti-hugging', 'Comet-riding',
   'Pyramid-building', 'Phoenix-rising', 'Galaxy-juggling', 'Llama-whispering', 'Thunder-bottling',
   'Narwhal-jousting', 'Golem-kvetching',
+  'Konami-coding', 'Triforce-assembling', 'Final-boss-slaying', 'MissingNo-catching', 'Any%-speedrunning',
+  'Herobrine-sighting', 'Leeroy-Jenkinsing', 'Pentakilling', 'Ace-clutching', 'Rainbow-Road-racing',
 ]
 
 export type Rarity = 'common' | 'rare' | 'shiny'
@@ -138,6 +160,19 @@ const IRREGULAR_PAST: Record<string, string> = {
   bending: 'bent',
   winding: 'wound',
   weaving: 'wove',
+  Speedrunning: 'Speedran',
+  speedrunning: 'speedran',
+  quitting: 'quit',
+  fighting: 'fought',
+  binding: 'bound',
+  breaking: 'broke',
+  sticking: 'stuck',
+  resetting: 'reset',
+  stealing: 'stole',
+  hitting: 'hit',
+  throwing: 'threw',
+  catching: 'caught',
+  Headshotting: 'Headshot',
 }
 
 const VOWELS = 'aeiou'

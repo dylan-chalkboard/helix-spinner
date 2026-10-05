@@ -2,7 +2,7 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 
 import { dividerCells, dividerLine, heatFor } from './helix'
 import { activeSeasons, easterOf, hanukkahNight, SEASONS, thanksgivingOf } from './seasons'
-import { drawVerb, toPastTense, VERBS_BY_MODE, WACKY_VERBS } from './words'
+import { drawVerb, RARE_VERBS, toPastTense, VERBS_BY_MODE, WACKY_VERBS } from './words'
 
 // A day with no holiday pack in season.
 const QUIET_DAY = new Date(2026, 7, 15).getTime()
@@ -111,7 +111,7 @@ describe('helix spinner', () => {
       requestId: 'helix-dex',
       props: { bodyColumns: 60, bodyRows: 30 } as never,
     })
-    expect(await dexPane.find({ type: 'Text', text: /^1\/\d+ found · 0\/20 rare · 0 shiny · 0 limited$/ })).toBeDefined()
+    expect(await dexPane.find({ type: 'Text', text: new RegExp(`^1/\\d+ found · 0/${RARE_VERBS.length} rare · 0 shiny · 0 limited$`) })).toBeDefined()
     await dexPane.unmount()
     await ui.unmount()
   })
