@@ -136,8 +136,8 @@ export const hanukkahNight = (date: Date) => {
       continue
     }
     const night = daysBetween(dayOf(year, start[0], start[1]), date) + 1
-    if (night >= 1 && night <= 9) {
-      return Math.min(night, 8)
+    if (night >= 1 && night <= 8) {
+      return night
     }
   }
   return null
@@ -149,7 +149,7 @@ export const SEASONS: readonly Season[] = [
     name: 'Halloween',
     palette: ['#4c1d95', '#f97316', '#fed7aa'],
     signature: 'bat',
-    isActive: between(10, 1, 10, 31),
+    isActive: between(10, 31, 10, 31),
     verbs: [
       'Cauldron-bubbling', 'Ghost-wrangling', 'Pumpkin-carving', 'Broomstick-zooming', 'Cobweb-spinning',
       'Potion-brewing', 'Bat-flapping', 'Spell-casting', 'Haunting', 'Skeleton-rattling', 'Candy-hoarding',
@@ -168,7 +168,7 @@ export const SEASONS: readonly Season[] = [
     name: 'Thanksgiving',
     palette: ['#78350f', '#ea580c', '#fde68a'],
     signature: 'leaves',
-    isActive: date => isWithin(date, dayOf(date.getFullYear(), 11, 1), thanksgivingOf(date.getFullYear())),
+    isActive: date => daysBetween(thanksgivingOf(date.getFullYear()), date) === 0,
     verbs: [
       'Gravy-boating', 'Turkey-trotting', 'Pie-slicing', 'Cranberry-saucing', 'Drumstick-drumming',
       'Leftover-loading', 'Napkin-folding', 'Wishbone-wishing', 'Gobble-gobbling', 'Corn-shucking',
@@ -204,7 +204,7 @@ export const SEASONS: readonly Season[] = [
     name: 'Christmas',
     palette: ['#14532d', '#dc2626', '#f8fafc'],
     signature: 'snow',
-    isActive: between(12, 1, 12, 26),
+    isActive: between(12, 25, 12, 25),
     verbs: [
       'Gift-wrapping', 'Sleigh-belling', 'Cookie-baking', 'Tinsel-tangling', 'Ornament-hanging',
       'Chimney-sliding', 'Reindeer-wrangling', 'Snowman-building', 'Stocking-stuffing', 'Carol-singing',
@@ -222,7 +222,7 @@ export const SEASONS: readonly Season[] = [
     name: "New Year's",
     palette: ['#1e1b4b', '#eab308', '#fefce8'],
     signature: 'fireworks',
-    isActive: date => between(12, 30, 12, 31)(date) || between(1, 1, 1, 2)(date),
+    isActive: date => between(12, 31, 12, 31)(date) || between(1, 1, 1, 1)(date),
     verbs: [
       'Countdown-counting', 'Confetti-tossing', 'Resolution-making', 'Champagne-popping', 'Ball-dropping',
       'Noisemaker-tooting', 'Sparkler-waving', 'Fresh-starting', 'Calendar-flipping', 'Party-hatting',
@@ -240,7 +240,7 @@ export const SEASONS: readonly Season[] = [
     name: 'Lunar New Year',
     palette: ['#7f1d1d', '#dc2626', '#facc15'],
     signature: 'lantern',
-    isActive: around(LUNAR_NEW_YEAR, 0, 7),
+    isActive: around(LUNAR_NEW_YEAR, 0, 0),
     verbs: [
       'Dumpling-folding', 'Lantern-lighting', 'Red-envelope-gifting', 'Lion-dancing', 'Firecracker-popping',
       'Fortune-wishing', 'Noodle-slurping', 'Dragon-parading', 'Tangerine-trading', 'Spring-cleaning',
@@ -258,7 +258,7 @@ export const SEASONS: readonly Season[] = [
     name: "Valentine's",
     palette: ['#831843', '#ec4899', '#fce7f3'],
     signature: 'hearts',
-    isActive: between(2, 7, 2, 14),
+    isActive: between(2, 14, 2, 14),
     verbs: [
       'Card-swapping', 'Cupid-arrowing', 'Chocolate-boxing', 'Heart-doodling', 'Rose-gifting', 'Poem-penning',
       'Love-lettering', 'Candy-hearting', 'Swoon-swooning', 'Sweetheart-crooning',
@@ -274,7 +274,7 @@ export const SEASONS: readonly Season[] = [
     name: "St. Patrick's",
     palette: ['#14532d', '#22c55e', '#fef08a'],
     signature: 'clovers',
-    isActive: between(3, 10, 3, 17),
+    isActive: between(3, 17, 3, 17),
     verbs: [
       'Shamrock-spotting', 'Leprechaun-chasing', 'Rainbow-chasing', 'Pot-of-gold-hunting', 'Jig-dancing',
       'Clover-counting', 'Bagpipe-blasting', 'Parade-marching', 'Green-wearing', 'Lucky-dipping',
@@ -291,10 +291,7 @@ export const SEASONS: readonly Season[] = [
     name: 'Easter',
     palette: ['#6d28d9', '#f9a8d4', '#fef9c3'],
     signature: 'eggs',
-    isActive: date => {
-      const easter = easterOf(date.getFullYear())
-      return isWithin(date, new Date(easter.getTime() - 7 * DAY_MS), new Date(easter.getTime() + DAY_MS))
-    },
+    isActive: date => daysBetween(easterOf(date.getFullYear()), date) === 0,
     verbs: [
       'Egg-hunting', 'Egg-dyeing', 'Bunny-bouncing', 'Jellybean-hoarding', 'Chocolate-nibbling',
       'Peep-squishing', 'Spring-blooming', 'Pastel-painting', 'Carrot-crunching', 'Basket-filling',
@@ -310,7 +307,7 @@ export const SEASONS: readonly Season[] = [
     name: 'Fourth of July',
     palette: ['#1e3a8a', '#ef4444', '#f8fafc'],
     signature: 'fireworks',
-    isActive: between(7, 1, 7, 4),
+    isActive: between(7, 4, 7, 4),
     verbs: [
       'Firework-launching', 'Flag-waving', 'Hot-dog-grilling', 'Sparkler-twirling', 'Barbecue-flipping',
       'Parade-cheering', 'Picnic-packing', 'Star-spangling', 'Watermelon-slicing', 'Freedom-ringing',
@@ -327,7 +324,7 @@ export const SEASONS: readonly Season[] = [
     name: 'Diwali',
     palette: ['#7c2d12', '#f59e0b', '#fef3c7'],
     signature: 'lamps',
-    isActive: around(DIWALI, 2, 2),
+    isActive: around(DIWALI, 0, 0),
     verbs: [
       'Diya-lighting', 'Rangoli-drawing', 'Sweet-sharing', 'Lamp-glowing', 'Sparkler-swirling',
       'Lantern-hanging', 'Ladoo-munching', 'Marigold-stringing', 'Mithai-gifting', 'Light-festivaling',
