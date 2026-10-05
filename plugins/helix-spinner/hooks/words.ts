@@ -93,14 +93,37 @@ export const pickVerb = (mode: string, seed: string) => {
 }
 
 // The verb a spinner state shows, with its rarity: now and then a secret rare verb, and very rarely a shiny.
-export const drawVerb = (mode: string, seed: string): { verb: string; rarity: Rarity } => {
+const SEASONAL_ODDS = 3
+
+// About one pick in three comes from the active holiday pack, when there is one.
+const seasonalPick = (seasonal: readonly string[] | undefined, salt: string) => {
+  const isSeasonal = seasonal !== undefined && seasonal.length > 0 && hashOf(`season:${salt}`) % SEASONAL_ODDS === 0
+  return isSeasonal ? seasonal[hashOf(`season-verb:${salt}`) % seasonal.length] : undefined
+}
+
+export const drawVerb = (
+  mode: string,
+  seed: string,
+  seasonal?: readonly string[],
+): { verb: string; rarity: Rarity } => {
   const isRare = hashOf(`rare:${mode}:${seed}`) % RARE_ODDS === 0
-  const verb = isRare ? (RARE_VERBS[hashOf(seed) % RARE_VERBS.length] ?? 'Quantum-noodling') : pickVerb(mode, seed)
+  const regular = seasonalPick(seasonal, `${mode}:${seed}`) ?? pickVerb(mode, seed)
+  const verb = isRare ? (RARE_VERBS[hashOf(seed) % RARE_VERBS.length] ?? 'Quantum-noodling') : regular
   const isShiny = hashOf(`shiny:${mode}:${seed}`) % SHINY_ODDS === 0
   return { verb, rarity: isShiny ? 'shiny' : isRare ? 'rare' : 'common' }
 }
 
 const IRREGULAR_PAST: Record<string, string> = {
+  lighting: 'lit',
+  shining: 'shone',
+  singing: 'sang',
+  wearing: 'wore',
+  dyeing: 'dyed',
+  drawing: 'drew',
+  building: 'built',
+  making: 'made',
+  hanging: 'hung',
+  taking: 'took',
   Ringing: 'Rang',
   spinning: 'spun',
   Overthinking: 'Overthought',
@@ -141,4 +164,5 @@ export const toPastTense = (verb: string) => {
   return parts.join('-')
 }
 
-export const pickPastVerb = (seed: string) => toPastTense(pickVerb('any', seed))
+export const pickPastVerb = (seed: string, seasonal?: readonly string[]) =>
+  toPastTense(seasonalPick(seasonal, `past:${seed}`) ?? pickVerb('any', seed))

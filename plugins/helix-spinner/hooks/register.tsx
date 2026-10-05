@@ -1,10 +1,13 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { HelixAlerts, HelixDex, HelixTurn } from '../types'
+import type { HelixAlerts, HelixDex, HelixTheme, HelixTurn } from '../types'
 import { drawVerb, pickPastVerb, pickVerb, RARE_VERBS, VERBS_BY_MODE, WACKY_VERBS } from './words'
 import type { Rarity } from './words'
 import { TIP_LINES } from './tips'
+import type { TipLine } from './tips'
+import { activeSeasons, hanukkahNight, SEASONS, seasonById } from './seasons'
+import type { Season } from './seasons'
 
 const turn = atom({ plugin: 'helix-spinner', key: 'turn' } as const, null as HelixTurn | null)
 const dex = atom({ plugin: 'helix-spinner', key: 'dex' } as const, { seen: [], shiny: [] } as HelixDex)
@@ -14,7 +17,10 @@ const alerts = atom({ plugin: 'helix-spinner', key: 'alerts' } as const, 'off' a
 
 const tipsOn = atom({ plugin: 'helix-spinner', key: 'tipsOn' } as const, true)
 
+const theme = atom({ plugin: 'helix-spinner', key: 'theme' } as const, 'auto' as HelixTheme)
+
 const DEX_STORE_KEY = 'dex'
+const THEME_STORE_KEY = 'theme'
 const TIPS_STORE_KEY = 'tipsOn'
 const ALERTS_STORE_KEY = 'alerts'
 
@@ -43,6 +49,30 @@ const bar = (found: number, total: number) => {
 }
 
 const totalVerbs = WACKY_VERBS.length + RARE_VERBS.length
+const COLLECTIBLE = new Set([...WACKY_VERBS, ...RARE_VERBS])
+
+// The holiday packs in play: the calendar's on auto, none when off, or the one forced.
+const seasonsFor = (setting: HelixTheme, date: Date): readonly Season[] => {
+  if (setting === 'off') {
+    return []
+  }
+  const forced = seasonById(setting)
+  return forced ? [forced] : activeSeasons(date)
+}
+
+const seedNumber = (seed: string) => Array.from(seed).reduce((sum, character) => sum + character.charCodeAt(0), 0)
+
+// Every third line of the tips rotation is from the holiday pack.
+const withSeasonLines = (lines: readonly TipLine[], season: Season | undefined) => {
+  if (!season) {
+    return lines
+  }
+  const seasonal = season.lines.map(text => ({ kind: season.name, text, color: season.palette[1] }))
+  return lines.flatMap((line, index) => (index % 2 === 1 ? [line, seasonal[Math.floor(index / 2) % seasonal.length]!] : [line]))
+}
+
+const themeLabel = (setting: HelixTheme) =>
+  setting === 'auto' ? 'auto (follows the calendar)' : setting === 'off' ? 'off' : (seasonById(setting)?.name ?? setting)
 
 const DEMO_PANE = 'helix-demo'
 
@@ -73,6 +103,14 @@ export const register: Register = on => {
     if (savedTipsOn !== undefined) {
       await update($, tipsOn, () => savedTipsOn)
     }
+    const savedTheme = (await $.store.get(THEME_STORE_KEY)) as HelixTheme | undefined
+    if (savedTheme) {
+      await update($, theme, () => savedTheme)
+    }
+    await $.command.register({
+      name: 'helix-theme',
+      description: 'Holiday packs for the spinner: auto, off, or a holiday to preview (try "list")',
+    })
     await $.command.register({ name: 'helix-dex', description: 'Show every spinner verb you have collected' })
     await $.command.register({ name: 'helix-demo', description: 'Show every helix spinner animation side by side' })
     return next(e)
@@ -157,14 +195,41 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('ui.render', { component: 'TurnDuration' }, ($, e, next) =>
-    next({ ...e, props: { ...e.props, word: pickPastVerb(`${e.requestId}:${e.props.durationMs}`) } }),
-  )
+  on('command.run', { command: 'helix-theme' }, async ($, e) => {
+    const choice = e.args.trim().toLowerCase()
+    const names = SEASONS.map(season => season.id).join(', ')
+    const now = new Date(await $.clock.now())
+    if (choice === '' || choice === 'list') {
+      const active = activeSeasons(now).map(season => season.name)
+      const today = active.length > 0 ? active.join(' and ') : 'none'
+      return {
+        text: `Holiday packs: ${themeLabel(await read($, theme))}. In season today: ${today}.\nUse /helix-theme auto, off, or one of: ${names}`,
+      }
+    }
+    const match = SEASONS.find(season => season.id === choice || season.name.toLowerCase() === choice)
+    const next = choice === 'auto' || choice === 'off' ? choice : match?.id
+    if (!next) {
+      return { text: `No holiday pack called "${choice}". Try auto, off, or one of: ${names}` }
+    }
+    await update($, theme, () => next)
+    await $.store.set(THEME_STORE_KEY, next)
+    return { text: `Holiday packs: ${themeLabel(next)}.` }
+  })
+
+  on('ui.render', { component: 'TurnDuration' }, async ($, e, next) => {
+    const seasons = seasonsFor(await read($, theme), new Date(await $.clock.now()))
+    const seed = `${e.requestId}:${e.props.durationMs}`
+    const season = seasons[seedNumber(seed) % Math.max(1, seasons.length)]
+    return next({ ...e, props: { ...e.props, word: pickPastVerb(seed, season?.verbs) } })
+  })
 
   on('ui.render', { component: 'Spinner' }, async ($, e, next) => {
     const current = await read($, turn)
     const seed = current ? `${current.turnId}:${current.stepIndex}` : `${e.requestId}:${e.props.word}`
-    const { verb, rarity } = drawVerb(e.props.mode, seed)
+    const now = new Date(await $.clock.now())
+    const seasons = seasonsFor(await read($, theme), now)
+    const season = seasons[seedNumber(current?.turnId ?? seed) % Math.max(1, seasons.length)]
+    const { verb, rarity } = drawVerb(e.props.mode, seed, season?.verbs)
     const isAnimatable = e.surface === 'terminal' || e.surface === 'desktop'
     if (!isAnimatable) {
       return next({ ...e, props: { ...e.props, word: verb } })
@@ -182,7 +247,12 @@ export const register: Register = on => {
       startedAt: current?.startedAt ?? null,
       outputTokens: current?.outputTokens ?? 0,
       inputTokens: current?.inputTokens ?? 0,
-      tips: (await read($, tipsOn)) ? TIP_LINES : [],
+      tips: (await read($, tipsOn)) ? withSeasonLines(TIP_LINES, season) : [],
+      ...(season && {
+        palette: season.palette,
+        signature: season.signature,
+        night: season.id === 'hanukkah' ? (hanukkahNight(now) ?? 8) : 0,
+      }),
       tipSeed: seed.length * 7 + (current?.startedAt ?? 0),
       divider: true,
     }
@@ -240,6 +310,11 @@ export const register: Register = on => {
     const collection = await read($, dex)
     const seen = new Set(collection.seen)
     const rareFound = RARE_VERBS.filter(verb => seen.has(verb))
+    const collectibleFound = collection.seen.filter(verb => COLLECTIBLE.has(verb)).length
+    const inSeason = new Set(seasonsFor(await read($, theme), new Date(await $.clock.now())).map(season => season.id))
+    const limited = SEASONS.map(season => ({ season, found: season.verbs.filter(verb => seen.has(verb)) }))
+    const limitedFound = limited.reduce((sum, { found }) => sum + found.length, 0)
+    const limitedShown = limited.filter(({ season, found }) => found.length > 0 || inSeason.has(season.id))
     const alertLevel = await read($, alerts)
     const cycleAlerts = async () => {
       await update($, alerts, level => NEXT_ALERTS[level])
@@ -263,7 +338,7 @@ export const register: Register = on => {
         </Box>
         <Text> </Text>
         <Text bold>
-          {collection.seen.length}/{totalVerbs} found · {rareFound.length}/{RARE_VERBS.length} rare · {collection.shiny.length} shiny
+          {collectibleFound}/{totalVerbs} found · {rareFound.length}/{RARE_VERBS.length} rare · {collection.shiny.length} shiny · {limitedFound} limited
         </Text>
         <Text> </Text>
         {SECTIONS.map(({ mode, label, color }) => {
@@ -305,6 +380,25 @@ export const register: Register = on => {
           <Text color="#facc15">
             {collection.shiny.length > 0 ? collection.shiny.join(', ') : 'None yet. Any verb can turn up golden, about 1 in 1,000.'}
           </Text>
+        </Box>
+        <Box flexDirection="column" marginBottom={1}>
+          <Text color="#fb923c" bold>
+            Limited edition
+          </Text>
+          {limitedShown.length === 0 && (
+            <Text dimColor>Holiday verbs appear during their season. Next up, check /helix-theme list.</Text>
+          )}
+          {limitedShown.map(({ season, found }) => (
+            <Text>
+              <Text color={season.palette[1]}>{season.name}</Text>
+              <Text dimColor>
+                {' '}
+                {found.length}/{season.verbs.length}
+                {inSeason.has(season.id) ? ' (in season now)' : ''}
+                {found.length > 0 ? `: ${found.join(', ')}` : ''}
+              </Text>
+            </Text>
+          ))}
         </Box>
         <Button key="close" label="Close" role="dismiss" onPress={() => $.ui.close({ id: DEX_PANE })} />
       </Box>

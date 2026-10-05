@@ -12,9 +12,12 @@ type Props = {
   rarity?: 'common' | 'rare' | 'shiny'
   collect?: string | null
   agents?: number
-  tips?: readonly { kind: string; text: string }[]
+  tips?: readonly { kind: string; text: string; color?: string }[]
   tipSeed?: number
   divider?: boolean
+  palette?: string[]
+  signature?: string
+  night?: number
 }
 type State = { tick: number; mountedAt: number; phase: number; tipIndex: number; tipChangedTick: number }
 
@@ -35,6 +38,99 @@ export const dividerLine = (width: number, elapsedMs: number) => {
   return Array.from({ length: width }, (_, cell) => (cell < head && cell >= head - PULSE_LENGTH ? PULSE : DIVIDER)).join('')
 }
 const FALLBACK_COLUMNS = 80
+
+// A seasonal touch drawn over the divider: [column, character] marks for the moment, all in the divider's own dim tone.
+type Mark = [column: number, character: string]
+
+const wrap = (value: number, size: number) => ((value % size) + size) % size
+
+const flicker = (ms: number, period: number, a: string, b: string) => (Math.floor(ms / period) % 2 === 0 ? a : b)
+
+const centered = (width: number, text: string): Mark[] => {
+  const start = Math.max(0, Math.floor((width - text.length) / 2))
+  return Array.from(text).map((character, index) => [start + index, character])
+}
+
+const drifting = (width: number, ms: number, count: number, cellsPerSecond: number, glyph: (index: number) => string): Mark[] =>
+  Array.from({ length: count }, (_, index) => {
+    const speed = cellsPerSecond * (0.7 + ((index * 37) % 10) / 15)
+    const offset = (index * width) / count
+    return [Math.floor(wrap(offset + (ms / 1000) * speed, width)), glyph(index)]
+  })
+
+const signatureMarks = (signature: string, width: number, ms: number, night: number): Mark[] => {
+  switch (signature) {
+    case 'bat': {
+      const x = Math.round(((Math.sin(ms / 1900) + 1) / 2) * Math.max(0, width - 3))
+      const wings = flicker(ms, 260, 'ᴧᴥᴧ', 'ᵛᴥᵛ')
+      return Array.from(wings).map((character, index) => [x + index, character])
+    }
+    case 'leaves':
+      return drifting(width, ms, 4, 4, index => flicker(ms + index * 300, 600, '❧', '☙'))
+    case 'snow':
+      return drifting(width, ms, Math.max(4, Math.floor(width / 10)), 2.5, index => (index % 3 === 0 ? '*' : '·'))
+    case 'hearts':
+      return drifting(width, ms, 4, 3, index => flicker(ms + index * 350, 700, '♡', '♥'))
+    case 'clovers':
+      return drifting(width, ms, 4, 3, () => '♣')
+    case 'eggs':
+      return drifting(width, ms, 2, 3, () => '◖◗').flatMap(([x]) => [[x, '◖'], [x + 1, '◗']] as Mark[])
+    case 'lantern': {
+      const sway = Math.round(Math.sin(ms / 480) * 4)
+      return [[Math.floor(width / 2) + sway, '⊕']]
+    }
+    case 'menorah': {
+      // Eight candles and the shamash in the middle; each night lights one more, filling from the right.
+      const slots = Array.from({ length: 9 }, (_, slot) => {
+        if (slot === 4) {
+          return '✦'
+        }
+        const candle = slot > 4 ? 9 - slot : 8 - slot
+        return candle <= night ? flicker(ms + slot * 170, 340, '✶', '✷') : '·'
+      })
+      return centered(width, ` ${slots.join(' ')} `)
+    }
+    case 'lamps': {
+      const lit = Math.floor(ms / 400) % 9
+      const lamps = Array.from({ length: 7 }, (_, lamp) => (lamp < lit ? '◉' : '◦'))
+      return centered(width, ` ${lamps.join(' ')} `)
+    }
+    case 'fireworks': {
+      const cycle = Math.floor(ms / 4000)
+      const age = ms % 4000
+      const center = 6 + ((cycle * 53) % Math.max(1, width - 12))
+      const bursts = ['·', '✦', '·✶·', '✧ ✧ ✧', '·   ·']
+      const frame = bursts[Math.floor(age / 220)]
+      return frame ? Array.from(frame).map((character, index) => [center - Math.floor(frame.length / 2) + index, character]) : []
+    }
+    default:
+      return []
+  }
+}
+
+export const dividerCells = (width: number, elapsedMs: number, signature?: string, night = 0) => {
+  const line = Array.from(signature && signature !== 'fireworks' ? DIVIDER.repeat(width) : dividerLine(width, elapsedMs))
+  const marked = new Set<number>()
+  for (const [column, character] of signature ? signatureMarks(signature, width, elapsedMs, night) : []) {
+    if (column >= 0 && column < width && character !== ' ') {
+      line[column] = character
+      marked.add(column)
+    }
+  }
+  return line.map((character, column) => ({ character, isMark: marked.has(column) }))
+}
+
+// Runs of plain line and of marks, so each run is one Text.
+const dividerRuns = (cells: { character: string; isMark: boolean }[]) =>
+  cells.reduce<{ text: string; isMark: boolean }[]>((runs, cell) => {
+    const last = runs[runs.length - 1]
+    if (last && last.isMark === cell.isMark) {
+      last.text += cell.character
+    } else {
+      runs.push({ text: cell.character, isMark: cell.isMark })
+    }
+    return runs
+  }, [])
 
 const LABEL_COLORS: Record<string, string> = {
   Tip: '#93c5fd',
@@ -290,7 +386,8 @@ const Helix: ClientModule<Props, State> = (props, surface) => {
   }
 
   const phase = surface.state?.phase ?? 0
-  const motion = MOTIONS[props.mode] ?? THINKING
+  const baseMotion = MOTIONS[props.mode] ?? THINKING
+  const motion = props.palette ? { ...baseMotion, palette: props.palette } : baseMotion
   const startedAt = props.startedAt ?? surface.state?.mountedAt ?? Date.now()
   const elapsedMs = Date.now() - startedAt + (props.aheadMs ?? 0)
   const fever = { heat: heatFor(elapsedMs) }
@@ -322,7 +419,19 @@ const Helix: ClientModule<Props, State> = (props, surface) => {
 
   return (
     <Box flexDirection="column">
-      {props.divider && <Text dimColor>{dividerLine(dividerWidth, (surface.state?.tick ?? 0) * FRAME_MS)}</Text>}
+      {props.divider && (
+        <Box flexDirection="row">
+          {dividerRuns(dividerCells(dividerWidth, (surface.state?.tick ?? 0) * FRAME_MS, props.signature, props.night)).map(run =>
+            run.isMark ? (
+              <Text dimColor color={props.palette?.[1]}>
+                {run.text}
+              </Text>
+            ) : (
+              <Text dimColor>{run.text}</Text>
+            ),
+          )}
+        </Box>
+      )}
       <Box flexDirection="row">
         {cells.map(({ glyph, color, isHot }) => (
           <Text color={color} bold={isHot}>
@@ -343,7 +452,7 @@ const Helix: ClientModule<Props, State> = (props, surface) => {
       {tip && (
         <Box flexDirection="row">
           <Text dimColor>{'  ⎿  '}</Text>
-          <Text color={LABEL_COLORS[tip.kind] ?? '#93c5fd'}>{`${tip.kind}:`}</Text>
+          <Text color={tip.color ?? LABEL_COLORS[tip.kind] ?? '#93c5fd'}>{`${tip.kind}:`}</Text>
           <Box flexShrink={1}>
             <Text dimColor wrap="truncate-end">
               {' '}

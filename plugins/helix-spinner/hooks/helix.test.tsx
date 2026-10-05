@@ -1,7 +1,11 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { dividerLine, heatFor } from './helix'
+import { dividerCells, dividerLine, heatFor } from './helix'
+import { activeSeasons, easterOf, hanukkahNight, SEASONS, thanksgivingOf } from './seasons'
 import { drawVerb, toPastTense, VERBS_BY_MODE, WACKY_VERBS } from './words'
+
+// A day with no holiday pack in season.
+const QUIET_DAY = new Date(2026, 7, 15).getTime()
 
 const SPINNER = { word: 'Sauteing', message: null, suffix: '…', mode: 'thinking' } as const
 
@@ -15,6 +19,7 @@ describe('helix spinner', () => {
   for (const surface of ['terminal', 'desktop'] as const) {
     test(`draws one animated row with a wacky verb on ${surface}`, async ($, on) => {
       mock.store(on)
+    mock.clock(on, { now: QUIET_DAY })
       const ui = await $.ui.mount({ plugin: 'helix-spinner', surface, component: 'Spinner', props: SPINNER })
 
       const firstFrame = await rowText(ui)
@@ -35,7 +40,8 @@ describe('helix spinner', () => {
     })
   }
 
-  test('each state draws its own animation', async $ => {
+  test('each state draws its own animation', async ($, on) => {
+    mock.clock(on, { now: QUIET_DAY })
     const modes = ['thinking', 'requesting', 'responding', 'tool-input', 'tool-use'] as const
     const frames = new Set<string>()
     for (const mode of modes) {
@@ -47,7 +53,8 @@ describe('helix spinner', () => {
     expect(frames.size).toBe(modes.length)
   })
 
-  test('the demo pane shows every animation and the heat stages', async $ => {
+  test('the demo pane shows every animation and the heat stages', async ($, on) => {
+    mock.clock(on, { now: QUIET_DAY })
     const ui = await $.ui.mount({
       plugin: 'helix-spinner',
       surface: 'terminal',
@@ -80,6 +87,7 @@ describe('helix spinner', () => {
   })
 
   test('the end-of-turn line gets a wacky past-tense verb', async ($, on) => {
+    mock.clock(on, { now: QUIET_DAY })
     on('ui.render', { component: 'TurnDuration' }, ($, e) => {
       const { Text } = $.ui.resolve(e)
       return <Text>{e.props.word} for 3s</Text>
@@ -92,6 +100,7 @@ describe('helix spinner', () => {
 
   test('a verb seen for the first time joins the dex', async ($, on) => {
     mock.store(on)
+    mock.clock(on, { now: QUIET_DAY })
     const ui = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Spinner', props: SPINNER })
     await ui.advance(100)
 
@@ -102,7 +111,7 @@ describe('helix spinner', () => {
       requestId: 'helix-dex',
       props: { bodyColumns: 60, bodyRows: 30 } as never,
     })
-    expect(await dexPane.find({ type: 'Text', text: /^1\/\d+ found · 0\/20 rare · 0 shiny$/ })).toBeDefined()
+    expect(await dexPane.find({ type: 'Text', text: /^1\/\d+ found · 0\/20 rare · 0 shiny · 0 limited$/ })).toBeDefined()
     await dexPane.unmount()
     await ui.unmount()
   })
@@ -123,6 +132,7 @@ describe('helix spinner', () => {
 
   test('alerts start off and the button cycles all, rare & shiny only, off', async ($, on) => {
     mock.store(on)
+    mock.clock(on, { now: QUIET_DAY })
     const pane = await $.ui.mount({
       plugin: 'helix-spinner',
       surface: 'terminal',
@@ -143,6 +153,7 @@ describe('helix spinner', () => {
 
   test('a tip, fact or reminder shows under the row and can be switched off', async ($, on) => {
     mock.store(on)
+    mock.clock(on, { now: QUIET_DAY })
     const ui = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Spinner', props: SPINNER })
     expect(await ui.find({ type: 'Text', text: '  ⎿  ', in: 'helix' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /^(Tip|Fun fact|Tech history|Reminder):$/, in: 'helix' })).toBeDefined()
@@ -164,6 +175,7 @@ describe('helix spinner', () => {
 
   test('clicking the tip line skips to the next one', async ($, on) => {
     mock.store(on)
+    mock.clock(on, { now: QUIET_DAY })
     const ui = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Spinner', props: SPINNER })
     const tipText = async () => (await ui.findAll({ type: 'Text', in: 'helix' })).map(t => t.text ?? '').join('').split('⎿')[1]
     const before = await tipText()
@@ -178,6 +190,7 @@ describe('helix spinner', () => {
 
   test('a divider line separates the live spinner from the response', async ($, on) => {
     mock.store(on)
+    mock.clock(on, { now: QUIET_DAY })
     const ui = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Spinner', props: SPINNER })
     await ui.resize({ columns: 40, rows: 3 })
     expect(await ui.find({ type: 'Text', text: /^[─━]{40}$/, in: 'helix' })).toBeDefined()
@@ -193,6 +206,7 @@ describe('helix spinner', () => {
 
   test('after a skip the next tip waits a full 15 seconds', async ($, on) => {
     mock.store(on)
+    mock.clock(on, { now: QUIET_DAY })
     const ui = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Spinner', props: SPINNER })
     const tipText = async () => (await ui.findAll({ type: 'Text', in: 'helix' })).map(t => t.text ?? '').join('').split('⎿')[1]
     await ui.advance(10_000)
@@ -207,6 +221,7 @@ describe('helix spinner', () => {
 
   test('the verb showing when the spinner first appears still reaches the dex', async ($, on) => {
     mock.store(on)
+    mock.clock(on, { now: QUIET_DAY })
     const ui = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Spinner', props: { ...SPINNER, mode: 'requesting' } })
     await ui.advance(100)
     const dexPane = await $.ui.mount({
@@ -219,5 +234,56 @@ describe('helix spinner', () => {
     expect(await dexPane.find({ type: 'Text', text: /^ [█░]+ 1\/\d+$/ })).toBeDefined()
     await dexPane.unmount()
     await ui.unmount()
+  })
+
+  test('holiday dates land where they should', () => {
+    const ids = (year: number, month: number, day: number) => activeSeasons(new Date(year, month - 1, day)).map(season => season.id)
+    expect(thanksgivingOf(2026).getDate()).toBe(26)
+    expect(thanksgivingOf(2027).getDate()).toBe(25)
+    expect([easterOf(2026).getMonth() + 1, easterOf(2026).getDate()]).toEqual([4, 5])
+    expect([easterOf(2027).getMonth() + 1, easterOf(2027).getDate()]).toEqual([3, 28])
+    expect(hanukkahNight(new Date(2026, 11, 4))).toBe(1)
+    expect(hanukkahNight(new Date(2026, 11, 11))).toBe(8)
+    expect(hanukkahNight(new Date(2026, 11, 20))).toBe(null)
+    expect(hanukkahNight(new Date(2028, 0, 1))).toBe(8)
+    expect(ids(2026, 10, 5)).toEqual(['halloween'])
+    expect(ids(2026, 11, 8)).toEqual(['thanksgiving', 'diwali'])
+    expect(ids(2026, 12, 5)).toEqual(['hanukkah', 'christmas'])
+    expect(ids(2027, 1, 1)).toEqual(['new-year'])
+    expect(ids(2026, 2, 20)).toEqual(['lunar-new-year'])
+    expect(ids(2026, 3, 17)).toEqual(['st-patricks'])
+    expect(ids(2026, 7, 4)).toEqual(['fourth-of-july'])
+    expect(ids(2026, 8, 15)).toEqual([])
+  })
+
+  test('holiday verbs have clean past tenses and no repeats', () => {
+    const seasonal = SEASONS.flatMap(season => season.verbs)
+    for (const verb of seasonal) {
+      expect(toPastTense(verb)).not.toMatch(/ing$/)
+    }
+    const everything = [...WACKY_VERBS, ...seasonal]
+    expect(everything.filter((verb, index) => everything.indexOf(verb) !== index)).toEqual([])
+  })
+
+  test('in October the spinner wears Halloween colors and a bat flits along the divider', async ($, on) => {
+    mock.store(on)
+    mock.clock(on, { now: new Date(2026, 9, 15).getTime() })
+    const ui = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Spinner', props: SPINNER })
+    await ui.resize({ columns: 60, rows: 4 })
+    const texts = (await ui.findAll({ type: 'Text', in: 'helix' })).map(t => t.text ?? '').join('')
+    expect(texts).toContain('ᴥ')
+    await ui.unmount()
+  })
+
+  test('each holiday signature draws within the divider', () => {
+    for (const signature of ['bat', 'leaves', 'menorah', 'snow', 'fireworks', 'lantern', 'hearts', 'clovers', 'eggs', 'lamps']) {
+      for (const ms of [0, 700, 2300, 9000]) {
+        const cells = dividerCells(50, ms, signature, 3)
+        expect(cells.length).toBe(50)
+      }
+    }
+    const menorah = dividerCells(40, 0, 'menorah', 3).map(cell => cell.character).join('')
+    expect((menorah.match(/[✶✷]/g) ?? []).length).toBe(3)
+    expect(menorah).toContain('✦')
   })
 })
