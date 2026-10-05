@@ -8,6 +8,9 @@ A Claude Code mod that replaces the "thinking" spinner with something much more 
   ⎿  Fun fact: Wombats make cube-shaped poop.  next ›
 ```
 
+**<img width="735" height="566" alt="image" src="https://github.com/user-attachments/assets/1cc9c79a-1df3-4a0e-9f31-04607703d9d2" />
+**
+
 ## What it does
 
 - **An animation for every phase:** a twisting helix while thinking, a signal wave while
