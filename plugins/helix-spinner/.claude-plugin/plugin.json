@@ -4,6 +4,6 @@
   "description": "Replaces the spinner row with a twisting braille helix, a wacky verb and the turn's time and tokens",
   "types": "./types/index.d.ts",
   "author": {
-    "name": "dylan-chalkboard"
+    "name": "dlandman27"
   }
 }

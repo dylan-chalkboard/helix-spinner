@@ -2,7 +2,7 @@
   "name": "helix-spinner",
   "description": "A whimsical animated spinner mod for Claude Code",
   "owner": {
-    "name": "dylan-chalkboard"
+    "name": "dlandman27"
   },
   "plugins": [
     {

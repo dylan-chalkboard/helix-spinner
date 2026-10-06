@@ -31,7 +31,7 @@ A Claude Code mod that replaces the "thinking" spinner with something much more 
 You need a recent Claude Code (2.1.289 or newer). Mods are an early-access feature.
 
 ```sh
-claude plugin marketplace add dylan-chalkboard/helix-spinner
+claude plugin marketplace add dlandman27/helix-spinner
 claude plugin install helix-spinner@helix-spinner
 ```
 
