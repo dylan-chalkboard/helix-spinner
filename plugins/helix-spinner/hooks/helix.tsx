@@ -7,7 +7,6 @@ type Props = {
   startedAt: number | null
   outputTokens: number
   inputTokens: number
-  aheadMs?: number
   isDemo?: boolean
   rarity?: 'common' | 'rare' | 'shiny'
   collect?: string | null
@@ -240,14 +239,6 @@ const gradient = (palette: string[], position: number) => {
   return mix(stops[index] ?? BLACK, stops[index + 1] ?? BLACK, scaled - index)
 }
 
-const HOT_PALETTE = ['#b91c1c', '#f97316', '#fef08a']
-const clamp01 = (value: number) => Math.max(0, Math.min(1, value))
-
-// 0 until 30s, rising to 1 at 2m: hotter colors and a faster animation.
-export const heatFor = (elapsedMs: number) => clamp01((elapsedMs - 30_000) / 90_000)
-
-type Fever = { heat: number }
-
 const MAX_AGENT_STRANDS = 3
 
 // One extra wave per running subagent, each at its own pace and offset.
@@ -260,7 +251,7 @@ const isAgentStrand = (x: number, y: number, t: number, agentCount: number) => {
   return false
 }
 
-const drawFrame = (motion: Motion, t: number, fever: Fever, agentCount: number) => {
+const drawFrame = (motion: Motion, t: number, agentCount: number) => {
   const { isLit, depth = () => 0.5, focus } = motion.pattern
   const focusColumn = focus(t)
 
@@ -282,8 +273,7 @@ const drawFrame = (motion: Motion, t: number, fever: Fever, agentCount: number) 
     const glow = Math.exp(-(distance * distance) / 10)
     const shimmer = (Math.sin(cell * 0.6 + t * 2) + 1) / 2
     const base = gradient(motion.palette, 0.2 + shimmer * 0.4 + cellDepth * 0.2)
-    const cool = mix(mix(base, BLACK, 0.35 - cellDepth * 0.25), gradient(motion.palette, 1), glow)
-    const color = mix(cool, gradient(HOT_PALETTE, 0.3 + shimmer * 0.4 + glow * 0.3), fever.heat * 0.4)
+    const color = mix(mix(base, BLACK, 0.35 - cellDepth * 0.25), gradient(motion.palette, 1), glow)
 
     return { glyph: String.fromCharCode(0x2800 + bits), color: toHex(color), isHot: glow > 0.6 }
   })
@@ -305,7 +295,7 @@ const hueToRgb = (hue: number) =>
     return 255 * (0.75 - 0.35 * Math.max(-1, Math.min(k - 3, 9 - k, 1)))
   })
 
-const shimmerText = (text: string, motion: Motion, t: number, fever: Fever, rarity: string) =>
+const shimmerText = (text: string, motion: Motion, t: number, rarity: string) =>
   Array.from(text).map((character, index) => {
     const wave = (Math.sin(index * 0.5 - t * 1.8) + 1) / 2
     if (rarity === 'shiny') {
@@ -314,8 +304,7 @@ const shimmerText = (text: string, motion: Motion, t: number, fever: Fever, rari
     if (rarity === 'rare') {
       return { character, color: toHex(hueToRgb((index * 0.06 + t * 0.15) % 1)) }
     }
-    const cool = gradient(motion.palette, 0.45 + wave * 0.55)
-    return { character, color: toHex(mix(cool, gradient(HOT_PALETTE, 0.4 + wave * 0.6), fever.heat * 0.4)) }
+    return { character, color: toHex(gradient(motion.palette, 0.45 + wave * 0.55)) }
   })
 
 const SPARKLES = ['✦', '✧', '⋆', '✧']
@@ -389,9 +378,8 @@ const Helix: ClientModule<Props, State> = (props, surface) => {
   const baseMotion = MOTIONS[props.mode] ?? THINKING
   const motion = props.palette ? { ...baseMotion, palette: props.palette } : baseMotion
   const startedAt = props.startedAt ?? surface.state?.mountedAt ?? Date.now()
-  const elapsedMs = Date.now() - startedAt + (props.aheadMs ?? 0)
-  const fever = { heat: heatFor(elapsedMs) }
-  rates.set(surface, motion.speed * (1 + fever.heat * 0.8))
+  const elapsedMs = Date.now() - startedAt
+  rates.set(surface, motion.speed)
 
   const rarity = props.rarity ?? 'common'
   const agentCount = props.agents ?? 0
@@ -401,7 +389,7 @@ const Helix: ClientModule<Props, State> = (props, surface) => {
     showing.delete(surface)
   }
 
-  const cells = drawFrame(motion, phase, fever, agentCount)
+  const cells = drawFrame(motion, phase, agentCount)
   const stats = [formatElapsed(elapsedMs)]
   if (agentCount > 0) {
     stats.push(`${agentCount} ${agentCount === 1 ? 'agent' : 'agents'}`)
@@ -440,7 +428,7 @@ const Helix: ClientModule<Props, State> = (props, surface) => {
         ))}
         <Text> </Text>
         {rarity === 'shiny' && <Text color="#fde68a">{sparkle(phase, 0)} </Text>}
-        {shimmerText(props.text, motion, phase, fever, rarity).map(({ character, color }) => (
+        {shimmerText(props.text, motion, phase, rarity).map(({ character, color }) => (
           <Text color={color} bold>
             {character}
           </Text>

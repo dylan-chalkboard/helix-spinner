@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { dividerCells, dividerLine, heatFor } from './helix'
+import { dividerCells, dividerLine } from './helix'
 import { activeSeasons, easterOf, hanukkahNight, SEASONS, thanksgivingOf } from './seasons'
 import { drawVerb, RARE_VERBS, toPastTense, VERBS_BY_MODE, WACKY_VERBS } from './words'
 
@@ -53,7 +53,7 @@ describe('helix spinner', () => {
     expect(frames.size).toBe(modes.length)
   })
 
-  test('the demo pane shows every animation and the heat stages', async ($, on) => {
+  test('the demo pane shows every animation', async ($, on) => {
     mock.clock(on, { now: QUIET_DAY })
     const ui = await $.ui.mount({
       plugin: 'helix-spinner',
@@ -62,16 +62,10 @@ describe('helix spinner', () => {
       requestId: 'helix-demo',
       props: { bodyColumns: 60, bodyRows: 20 } as never,
     })
-    for (const label of ['Thinking', 'Requesting', 'Responding', 'Preparing a tool call', 'Running a tool', 'Heating up (75s)']) {
+    for (const label of ['Thinking', 'Requesting', 'Responding', 'Preparing a tool call', 'Running a tool']) {
       expect(await ui.find({ key: `demo-${label}` })).toBeDefined()
     }
     await ui.unmount()
-  })
-
-  test('turns heat up after 30s', () => {
-    expect(heatFor(10_000)).toBe(0)
-    expect(heatFor(75_000)).toBe(0.5)
-    expect(heatFor(300_000)).toBe(1)
   })
 
   test('verbs turn past tense for the end-of-turn line', () => {
