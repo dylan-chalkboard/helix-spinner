@@ -155,14 +155,40 @@ const armFocus = async ($: EngineInterface, timer: HelixFocus) => {
   })
 }
 
-// The repo this session works in, by git's top folder, or the folder itself outside a repo.
-const findProject = async ($: EngineInterface, cwd: string): Promise<HelixProject> => {
-  const fromGit = await $.process
-    .run(['git', 'rev-parse', '--show-toplevel'], { cwd, timeoutMs: 5000 })
+// One git answer, trimmed, or '' when git says no or cannot run.
+const askGit = async ($: EngineInterface, cwd: string, args: string[]) =>
+  $.process
+    .run(['git', ...args], { cwd, timeoutMs: 5000 })
     .then(({ exitCode, stdout }) => (exitCode === 0 ? stdout.trim() : ''))
     .catch(() => '')
+
+// The branch checked out, or `@` and the short commit when none is (a detached HEAD).
+const readBranch = async ($: EngineInterface, root: string) => {
+  const branch = await askGit($, root, ['symbolic-ref', '--short', '-q', 'HEAD'])
+  if (branch) {
+    return branch
+  }
+  const commit = await askGit($, root, ['rev-parse', '--short', 'HEAD'])
+  return commit ? `@${commit}` : null
+}
+
+// The repo this session works in, by git's top folder, or the folder itself outside a repo.
+const findProject = async ($: EngineInterface, cwd: string): Promise<HelixProject> => {
+  const fromGit = await askGit($, cwd, ['rev-parse', '--show-toplevel'])
   const root = fromGit || cwd
-  return { root, name: projectNameOf(root) }
+  return { root, name: projectNameOf(root), branch: fromGit ? await readBranch($, root) : null }
+}
+
+// Branches change mid-session (a checkout, a switch), so the divider asks again now and then.
+const refreshBranch = async ($: EngineInterface) => {
+  const current = await read($, project)
+  if (!current || current.branch === null) {
+    return
+  }
+  const branch = await readBranch($, current.root)
+  if (branch !== current.branch) {
+    await update($, project, previous => (previous ? { ...previous, branch } : previous))
+  }
 }
 
 // What the divider needs for the project: its name and color, or nothing when it is off.
@@ -172,7 +198,7 @@ const projectProps = async ($: EngineInterface) => {
     return null
   }
   const color = projectColor(current.name, (await read($, projectColors))[current.root])
-  return color ? { name: current.name, color } : null
+  return color ? { name: current.name, branch: current.branch, color } : null
 }
 
 // What the spinner needs to draw the countdown: the timer, and the hooks' own clock at drawing time.
@@ -278,6 +304,7 @@ export const register: Register = on => {
     await update($, turn, () => ({ turnId: e.turnId, startedAt, outputTokens: 0, inputTokens: 0, stepIndex: 0 }))
     await update($, tools, () => [])
     await update($, failure, () => null)
+    await refreshBranch($)
     return next(e)
   })
 
@@ -297,6 +324,9 @@ export const register: Register = on => {
       const result = await next(e)
       if (isFailedCommand(e.tool, result)) {
         await update($, failure, () => ({ id }))
+      }
+      if (e.tool === 'Bash') {
+        await refreshBranch($)
       }
       return result
     } finally {

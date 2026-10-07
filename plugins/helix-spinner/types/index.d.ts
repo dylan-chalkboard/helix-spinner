@@ -13,8 +13,8 @@ export type HelixFailure = { id: string }
 // A focus timer running from `/helix-focus`, in epoch milliseconds.
 export type HelixFocus = { startedAt: number; endsAt: number; minutes: number }
 
-// The repo (or folder) this session works in, for its divider color.
-export type HelixProject = { root: string; name: string }
+// The repo (or folder) this session works in, for its divider color; `branch` is null outside a repo.
+export type HelixProject = { root: string; name: string; branch: string | null }
 
 export type HelixAlerts = 'all' | 'special' | 'off'
 

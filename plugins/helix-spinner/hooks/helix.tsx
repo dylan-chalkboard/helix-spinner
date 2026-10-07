@@ -28,7 +28,7 @@ type Props = {
   introduced?: readonly string[]
   failure?: HelixFailure | null
   focus?: { startedAt: number; endsAt: number; sentAt: number } | null
-  project?: { name: string; color: string } | null
+  project?: { name: string; branch?: string | null; color: string } | null
   tipSeed?: number
   divider?: boolean
   palette?: string[]
@@ -458,14 +458,16 @@ const Helix: ClientModule<Props, State> = (props, surface) => {
   const tipIndex = (surface.state?.tipIndex ?? 0) + (props.tipSeed ?? 0)
   const tip = surface.state?.pinned ?? tipAt(props.tips ?? [], active, tipIndex)
 
-  tipRows.set(surface, props.divider ? 2 : 1)
+  // With a divider, a blank row above it keeps the block off the output: blank, divider, row, tip.
+  tipRows.set(surface, props.divider ? 3 : 1)
   const dividerWidth = surface.columns > 0 ? surface.columns : FALLBACK_COLUMNS
   const base = props.focus ? focusBase(surface, props.focus, dividerWidth) : undefined
   const plainCells = dividerCells(dividerWidth, tick * FRAME_MS, props.signature, props.night, base)
-  const dividerLineCells = props.project ? withProjectName(plainCells, props.project.name) : plainCells
+  const dividerLineCells = props.project ? withProjectName(plainCells, props.project.name, props.project.branch) : plainCells
 
   return (
     <Box flexDirection="column">
+      {props.divider && <Text> </Text>}
       {props.divider && (
         <Box flexDirection="row">
           {dividerRuns(dividerLineCells).map(run =>

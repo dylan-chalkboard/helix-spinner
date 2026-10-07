@@ -64,13 +64,20 @@ export const parseColorArgs = (args: string): ColorRequest => {
 
 export const colorNames = () => COLOR_NAMES.join(', ')
 
-// The project's name written into the divider near its left end: `── chalkboardHQ ─────`.
+const MAX_BRANCH_LENGTH = 28
+
+// `dylan/RET-1234-a-really-long-description` → `dylan/RET-1234-a-really-lon…`.
+export const shortBranch = (branch: string) =>
+  branch.length > MAX_BRANCH_LENGTH ? `${branch.slice(0, MAX_BRANCH_LENGTH - 1)}…` : branch
+
+// The project's name, and its branch when there is room, near the divider's left end: `── chalkboardHQ · main ───`.
 export const NAME_OFFSET = 3
 
-export const withProjectName = (cells: { character: string; isMark: boolean }[], name: string) => {
-  const label = ` ${name} `
-  const fits = NAME_OFFSET + label.length < cells.length / 2
-  if (!fits) {
+export const withProjectName = (cells: { character: string; isMark: boolean }[], name: string, branch?: string | null) => {
+  const fits = (label: string) => NAME_OFFSET + label.length < cells.length / 2
+  const withBranch = branch ? ` ${name} · ${shortBranch(branch)} ` : undefined
+  const label = withBranch && fits(withBranch) ? withBranch : ` ${name} `
+  if (!fits(label)) {
     return cells
   }
   return cells.map((cell, column) => {

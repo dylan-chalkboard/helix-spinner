@@ -4,7 +4,7 @@ import { dividerCells, dividerLine } from './helix'
 import { activeSeasons, easterOf, hanukkahNight, SEASONS, thanksgivingOf } from './seasons'
 import { DOT_COLUMNS, DOT_ROWS } from './grid'
 import { focusLine, formatRemaining, parseFocusArgs } from './focus'
-import { autoColorName, parseColorArgs, PROJECT_COLORS, projectColor, projectNameOf, withProjectName } from './project'
+import { autoColorName, parseColorArgs, PROJECT_COLORS, projectColor, projectNameOf, shortBranch, withProjectName } from './project'
 import { isFailedCommand } from './reactions'
 import { LONG_TURN_MS, situationsFor } from './situations'
 import { activeSituations, firstUnintroduced, tipAt } from './tip-rotation'
@@ -21,7 +21,7 @@ const rowText = async (ui: { findAll: (q: { type: string; in: string }) => Promi
   (await ui.findAll({ type: 'Text', in: 'helix' }))
     .map(t => t.text ?? '')
     .join('')
-    .replace(/^[─━]+/, '')
+    .replace(/^\s*[─━]+/, '')
 
 describe('helix spinner', () => {
   for (const surface of ['terminal', 'desktop'] as const) {
@@ -138,7 +138,7 @@ describe('helix spinner', () => {
       const props = { ...SPINNER, mode: 'tool-use' } as const
       const ui = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Spinner', props })
       for (let skip = 0; skip < skips; skip++) {
-        await ui.pointer({ type: 'down', x: 4, y: 2, button: 'left' })
+        await ui.pointer({ type: 'down', x: 4, y: 3, button: 'left' })
       }
 
       const call = $.tool.call({ tool: 'Grep', pattern: 'helix' } as never)
@@ -263,6 +263,7 @@ describe('helix spinner', () => {
   const reload = async ($: Parameters<TestBody>[0], on: Parameters<TestBody>[1]) => {
     on('session.start', (_$, e) => e as never)
     on('command.register', () => ({ value: undefined }) as never)
+    on('ui.status', () => ({ value: undefined }) as never)
     await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true } as never)
   }
 
@@ -286,13 +287,25 @@ describe('helix spinner', () => {
 
   const REPO = '/Users/someone/projects/chalkboardHQ'
 
-  const reloadInRepo = async ($: Parameters<TestBody>[0], on: Parameters<TestBody>[1]) => {
-    on('process.run', () => ({ value: { exitCode: 0, stdout: `${REPO}\n`, stderr: '' } }) as never)
+  // A fake git: the repo's top folder, and whatever `git.branch` (or, when null, `git.commit`) says is checked out.
+  const reloadInRepo = async ($: Parameters<TestBody>[0], on: Parameters<TestBody>[1], git = { branch: 'main' as string | null, commit: 'a1b2c3d' }) => {
+    const answer = (exitCode: number, stdout = '') => ({ value: { exitCode, stdout: `${stdout}\n`, stderr: '' } }) as never
+    on('process.run', (_$, e) => {
+      const command = e.argv.slice(1).join(' ')
+      if (command === 'rev-parse --show-toplevel') {
+        return answer(0, REPO)
+      }
+      if (command === 'symbolic-ref --short -q HEAD') {
+        return git.branch ? answer(0, git.branch) : answer(1)
+      }
+      return command === 'rev-parse --short HEAD' ? answer(0, git.commit) : answer(128)
+    })
     await reload($, on)
+    return git
   }
 
   const dividerTexts = async (ui: { findAll: (q: { type: string; in: string }) => Promise<readonly { text: string; props: Record<string, unknown> }[]> }) =>
-    (await ui.findAll({ type: 'Text', in: 'helix' })).filter(t => /^[─━\sA-Za-z]+$/.test(t.text) && /[─━]/.test(t.text))
+    (await ui.findAll({ type: 'Text', in: 'helix' })).filter(t => /[─━]/.test(t.text) && !/[\u2800-\u28ff]/.test(t.text))
 
   test('each project gets a steady color of its own', () => {
     expect(autoColorName('chalkboardHQ')).toBe(autoColorName('chalkboardHQ'))
@@ -325,7 +338,7 @@ describe('helix spinner', () => {
     await ui.resize({ columns: 60, rows: 4 })
     const autoColor = PROJECT_COLORS[autoColorName('chalkboardHQ')]
     const tinted = await dividerTexts(ui)
-    expect(tinted.map(t => t.text).join('')).toContain(' chalkboardHQ ')
+    expect(tinted.map(t => t.text).join('')).toContain(' chalkboardHQ · main ')
     expect(tinted.every(t => t.props.color === autoColor)).toBe(true)
     expect(tinted.some(t => t.props.dimColor === true)).toBe(false)
 
@@ -336,6 +349,42 @@ describe('helix spinner', () => {
     expect(plain.map(t => t.text).join('')).not.toContain('chalkboardHQ')
     expect(plain.some(t => t.props.color === autoColor)).toBe(false)
     await ui.unmount()
+  })
+
+  test('the branch follows a switch, and a detached HEAD shows its commit', async ($, on) => {
+    mock.store(on)
+    mock.clock(on, { now: NOON })
+    on('tool.call', async () => ({ result: { stdout: '', stderr: '' }, text: '' }) as never)
+    const git = await reloadInRepo($, on)
+    const ui = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Spinner', props: SPINNER })
+    await ui.resize({ columns: 120, rows: 4 })
+    const line = async () => (await dividerTexts(ui)).map(t => t.text).join('')
+    expect(await line()).toContain(' chalkboardHQ · main ')
+
+    git.branch = 'feature/branch-in-divider'
+    await $.tool.call({ tool: 'Bash', command: 'git switch feature/branch-in-divider' } as never)
+    await ui.redraw(SPINNER)
+    expect(await line()).toContain(' chalkboardHQ · feature/branch-in-divider ')
+
+    git.branch = null
+    await $.tool.call({ tool: 'Bash', command: 'git checkout a1b2c3d' } as never)
+    await ui.redraw(SPINNER)
+    expect(await line()).toContain(' chalkboardHQ · @a1b2c3d ')
+    await ui.unmount()
+  })
+
+  test('long branches are shortened, and a narrow line drops the branch before the name', () => {
+    expect(shortBranch('main')).toBe('main')
+    expect(shortBranch('dylan/RET-1234-a-really-long-description')).toBe('dylan/RET-1234-a-really-lon…')
+    const line = (width: number, branch: string | null) =>
+      withProjectName(Array.from('─'.repeat(width), character => ({ character, isMark: false })), 'chalkboardHQ', branch)
+        .map(cell => cell.character)
+        .join('')
+    expect(line(80, 'main')).toContain(' chalkboardHQ · main ')
+    expect(line(40, 'main')).toContain(' chalkboardHQ ')
+    expect(line(40, 'main')).not.toContain('main')
+    expect(line(20, 'main')).toBe('─'.repeat(20))
+    expect(line(80, null)).toContain(' chalkboardHQ ')
   })
 
   test('a chosen project color is remembered across sessions', async ($, on) => {
@@ -497,11 +546,11 @@ describe('helix spinner', () => {
     const ui = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Spinner', props: SPINNER })
     const tipText = async () => (await ui.findAll({ type: 'Text', in: 'helix' })).map(t => t.text ?? '').join('').split('⎿')[1]
     const before = await tipText()
-    await ui.pointer({ type: 'down', x: 4, y: 2, button: 'left' })
+    await ui.pointer({ type: 'down', x: 4, y: 3, button: 'left' })
     const after = await tipText()
     expect(after).toBeDefined()
     expect(after).not.toBe(before)
-    await ui.pointer({ type: 'down', x: 4, y: 1, button: 'left' })
+    await ui.pointer({ type: 'down', x: 4, y: 2, button: 'left' })
     expect(await tipText()).toBe(after)
     await ui.unmount()
   })
@@ -528,7 +577,7 @@ describe('helix spinner', () => {
     const ui = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Spinner', props: SPINNER })
     const tipText = async () => (await ui.findAll({ type: 'Text', in: 'helix' })).map(t => t.text ?? '').join('').split('⎿')[1]
     await ui.advance(10_000)
-    await ui.pointer({ type: 'down', x: 4, y: 2, button: 'left' })
+    await ui.pointer({ type: 'down', x: 4, y: 3, button: 'left' })
     const skippedTo = await tipText()
     await ui.advance(10_000)
     expect(await tipText()).toBe(skippedTo)
