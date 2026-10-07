@@ -3,6 +3,7 @@ import type { ClientModule } from 'claude-code'
 import type { HelixFailure } from '../types'
 
 import { focusLine } from './focus'
+import { withProjectName } from './project'
 import { CELLS, DOT_COLUMNS, DOT_ROWS, pingPong, strandRow } from './grid'
 import type { Motion, Pattern } from './grid'
 import { activeSituations, firstUnintroduced, tipAt } from './tip-rotation'
@@ -27,6 +28,7 @@ type Props = {
   introduced?: readonly string[]
   failure?: HelixFailure | null
   focus?: { startedAt: number; endsAt: number; sentAt: number } | null
+  project?: { name: string; color: string } | null
   tipSeed?: number
   divider?: boolean
   palette?: string[]
@@ -459,18 +461,20 @@ const Helix: ClientModule<Props, State> = (props, surface) => {
   tipRows.set(surface, props.divider ? 2 : 1)
   const dividerWidth = surface.columns > 0 ? surface.columns : FALLBACK_COLUMNS
   const base = props.focus ? focusBase(surface, props.focus, dividerWidth) : undefined
+  const plainCells = dividerCells(dividerWidth, tick * FRAME_MS, props.signature, props.night, base)
+  const dividerLineCells = props.project ? withProjectName(plainCells, props.project.name) : plainCells
 
   return (
     <Box flexDirection="column">
       {props.divider && (
         <Box flexDirection="row">
-          {dividerRuns(dividerCells(dividerWidth, tick * FRAME_MS, props.signature, props.night, base)).map(run =>
+          {dividerRuns(dividerLineCells).map(run =>
             run.isMark ? (
               <Text dimColor color={isShowingFailure ? FAILURE_COLOR : props.palette?.[1]}>
                 {run.text}
               </Text>
             ) : (
-              <Text dimColor={!isShowingFailure} color={isShowingFailure ? FAILURE_COLOR : undefined}>
+              <Text dimColor={!isShowingFailure && !props.project} color={isShowingFailure ? FAILURE_COLOR : props.project?.color}>
                 {run.text}
               </Text>
             ),

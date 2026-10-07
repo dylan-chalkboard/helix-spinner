@@ -48,6 +48,7 @@ claude plugin update helix-spinner@helix-spinner
 | --- | --- |
 | `/helix-dex` | Your verb collection, plus switches for new-verb alerts (off by default) and the tips line (on by default) |
 | `/helix-demo` | Every animation side by side |
+| `/helix-color [color]` | This project's divider color and name, so you can tell sessions apart. Picks one automatically; `/helix-color teal` pins one, `auto` goes back, `off` hides it |
 | `/helix-focus [minutes]` | A focus timer (25 minutes by default) that fills the spinner's divider while Claude works, with a toast and a soft chime when it's done. `/helix-focus stop` cancels it |
 
 ## Developing

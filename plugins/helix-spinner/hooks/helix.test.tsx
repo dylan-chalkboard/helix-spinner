@@ -4,6 +4,7 @@ import { dividerCells, dividerLine } from './helix'
 import { activeSeasons, easterOf, hanukkahNight, SEASONS, thanksgivingOf } from './seasons'
 import { DOT_COLUMNS, DOT_ROWS } from './grid'
 import { focusLine, formatRemaining, parseFocusArgs } from './focus'
+import { autoColorName, parseColorArgs, PROJECT_COLORS, projectColor, projectNameOf, withProjectName } from './project'
 import { isFailedCommand } from './reactions'
 import { LONG_TURN_MS, situationsFor } from './situations'
 import { activeSituations, firstUnintroduced, tipAt } from './tip-rotation'
@@ -261,7 +262,7 @@ describe('helix spinner', () => {
 
   const reload = async ($: Parameters<TestBody>[0], on: Parameters<TestBody>[1]) => {
     on('session.start', (_$, e) => e as never)
-    on('command.register', () => ({}) as never)
+    on('command.register', () => ({ value: undefined }) as never)
     await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true } as never)
   }
 
@@ -281,6 +282,65 @@ describe('helix spinner', () => {
     const { toasts } = listenForDone(on)
     await reload($, on)
     expect(toasts).toEqual(['⏱ Focus done: 5 minutes. Take a break!'])
+  })
+
+  const REPO = '/Users/someone/projects/chalkboardHQ'
+
+  const reloadInRepo = async ($: Parameters<TestBody>[0], on: Parameters<TestBody>[1]) => {
+    on('process.run', () => ({ value: { exitCode: 0, stdout: `${REPO}\n`, stderr: '' } }) as never)
+    await reload($, on)
+  }
+
+  const dividerTexts = async (ui: { findAll: (q: { type: string; in: string }) => Promise<readonly { text: string; props: Record<string, unknown> }[]> }) =>
+    (await ui.findAll({ type: 'Text', in: 'helix' })).filter(t => /^[─━\sA-Za-z]+$/.test(t.text) && /[─━]/.test(t.text))
+
+  test('each project gets a steady color of its own', () => {
+    expect(autoColorName('chalkboardHQ')).toBe(autoColorName('chalkboardHQ'))
+    expect(Object.keys(PROJECT_COLORS)).toContain(autoColorName('helix-spinner'))
+    expect(new Set(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'].map(autoColorName)).size).toBeGreaterThan(2)
+    expect(projectColor('anything', 'off')).toBeNull()
+    expect(projectColor('anything', 'violet')).toBe(PROJECT_COLORS.violet)
+    expect(projectColor('anything', 'not-a-color')).toBe(PROJECT_COLORS[autoColorName('anything')])
+    expect(projectNameOf('/Users/someone/projects/chalkboardHQ/')).toBe('chalkboardHQ')
+    expect(parseColorArgs(' Teal ')).toEqual({ action: 'set', color: 'teal' })
+    expect(parseColorArgs('')).toEqual({ action: 'show' })
+    expect(parseColorArgs('off')).toEqual({ action: 'off' })
+    expect(parseColorArgs('red')).toEqual({ action: 'invalid' })
+    const line = withProjectName(Array.from('─'.repeat(40), character => ({ character, isMark: false })), 'demo')
+    expect(line.map(cell => cell.character).join('')).toBe(`─── demo ${'─'.repeat(31)}`)
+    const narrow = withProjectName(Array.from('─'.repeat(12), character => ({ character, isMark: false })), 'chalkboardHQ')
+    expect(narrow.map(cell => cell.character).join('')).toBe('─'.repeat(12))
+  })
+
+  test('the divider wears the project color and name, until it is turned off', async ($, on) => {
+    mock.store(on)
+    mock.clock(on, { now: NOON })
+    await reloadInRepo($, on)
+    const ui = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Spinner', props: SPINNER })
+    await ui.resize({ columns: 60, rows: 4 })
+    const autoColor = PROJECT_COLORS[autoColorName('chalkboardHQ')]
+    const tinted = await dividerTexts(ui)
+    expect(tinted.map(t => t.text).join('')).toContain(' chalkboardHQ ')
+    expect(tinted.every(t => t.props.color === autoColor)).toBe(true)
+    expect(tinted.some(t => t.props.dimColor === true)).toBe(false)
+
+    const reply = ((await $.command.run({ command: 'helix-color', args: 'off' } as never)) as { text?: string }).text
+    expect(reply).toBe('chalkboardHQ: divider color and name off.')
+    await ui.redraw(SPINNER)
+    const plain = await dividerTexts(ui)
+    expect(plain.map(t => t.text).join('')).not.toContain('chalkboardHQ')
+    expect(plain.some(t => t.props.color === autoColor)).toBe(false)
+    await ui.unmount()
+  })
+
+  test('a chosen project color is remembered across sessions', async ($, on) => {
+    mock.store(on, { projectColors: { [REPO]: 'violet' } })
+    mock.clock(on, { now: NOON })
+    await reloadInRepo($, on)
+    const ui = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Spinner', props: SPINNER })
+    await ui.resize({ columns: 60, rows: 4 })
+    expect((await dividerTexts(ui)).every(t => t.props.color === PROJECT_COLORS.violet)).toBe(true)
+    await ui.unmount()
   })
 
   test('situations match the moment', () => {

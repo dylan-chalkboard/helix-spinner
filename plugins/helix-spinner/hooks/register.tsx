@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import type { HelixAlerts, HelixDex, HelixFailure, HelixFocus, HelixRunningTool, HelixTheme, HelixTurn } from '../types'
+import type { HelixAlerts, HelixDex, HelixFailure, HelixFocus, HelixProject, HelixRunningTool, HelixTheme, HelixTurn } from '../types'
 import { drawVerb, pickPastVerb, pickToolVerb, pickVerb, RARE_VERBS, VERBS_BY_MODE, WACKY_VERBS } from './words'
 import type { Rarity } from './words'
 import { TIP_LINES } from './tips'
@@ -9,6 +9,7 @@ import type { TipLine } from './tips'
 import { activeSeasons, hanukkahNight, SEASONS, seasonById } from './seasons'
 import type { Season } from './seasons'
 import { formatRemaining, parseFocusArgs } from './focus'
+import { autoColorName, colorNames, parseColorArgs, projectColor, projectNameOf } from './project'
 import { isFailedCommand } from './reactions'
 import { situationsFor } from './situations'
 import { toolGroupOf } from './tools'
@@ -21,6 +22,9 @@ const tools = atom({ plugin: 'helix-spinner', key: 'tools' } as const, [] as Hel
 const introduced = atom({ plugin: 'helix-spinner', key: 'introduced' } as const, [] as string[])
 const failure = atom({ plugin: 'helix-spinner', key: 'failure' } as const, null as HelixFailure | null)
 const focus = atom({ plugin: 'helix-spinner', key: 'focus' } as const, null as HelixFocus | null)
+const project = atom({ plugin: 'helix-spinner', key: 'project' } as const, null as HelixProject | null)
+// Each project's chosen color by its root folder: a color's name, or 'off'.
+const projectColors = atom({ plugin: 'helix-spinner', key: 'projectColors' } as const, {} as Record<string, string>)
 
 const alerts = atom({ plugin: 'helix-spinner', key: 'alerts' } as const, 'off' as HelixAlerts)
 
@@ -33,6 +37,7 @@ const THEME_STORE_KEY = 'theme'
 const TIPS_STORE_KEY = 'tipsOn'
 const ALERTS_STORE_KEY = 'alerts'
 const FOCUS_STORE_KEY = 'focus'
+const PROJECT_COLORS_STORE_KEY = 'projectColors'
 const FOCUS_CHIME = 'sounds/focus-done.wav'
 
 const NEXT_ALERTS: Record<HelixAlerts, HelixAlerts> = { off: 'all', all: 'special', special: 'off' }
@@ -150,6 +155,26 @@ const armFocus = async ($: EngineInterface, timer: HelixFocus) => {
   })
 }
 
+// The repo this session works in, by git's top folder, or the folder itself outside a repo.
+const findProject = async ($: EngineInterface, cwd: string): Promise<HelixProject> => {
+  const fromGit = await $.process
+    .run(['git', 'rev-parse', '--show-toplevel'], { cwd, timeoutMs: 5000 })
+    .then(({ exitCode, stdout }) => (exitCode === 0 ? stdout.trim() : ''))
+    .catch(() => '')
+  const root = fromGit || cwd
+  return { root, name: projectNameOf(root) }
+}
+
+// What the divider needs for the project: its name and color, or nothing when it is off.
+const projectProps = async ($: EngineInterface) => {
+  const current = await read($, project)
+  if (!current) {
+    return null
+  }
+  const color = projectColor(current.name, (await read($, projectColors))[current.root])
+  return color ? { name: current.name, color } : null
+}
+
 // What the spinner needs to draw the countdown: the timer, and the hooks' own clock at drawing time.
 const focusProps = async ($: EngineInterface) => {
   const timer = await read($, focus)
@@ -158,6 +183,8 @@ const focusProps = async ($: EngineInterface) => {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
+    // The mod pins nothing to the status line, so clear anything an older version left there.
+    $.ui.status(undefined)
     await update($, agents, () => [])
     await update($, tools, () => [])
     await update($, introduced, () => [])
@@ -177,6 +204,12 @@ export const register: Register = on => {
     if (savedTheme) {
       await update($, theme, () => savedTheme)
     }
+    const savedColors = (await $.store.get(PROJECT_COLORS_STORE_KEY)) as Record<string, string> | undefined
+    if (savedColors) {
+      await update($, projectColors, () => savedColors)
+    }
+    const found = await findProject($, e.cwd)
+    await update($, project, () => found)
     const savedFocus = (await $.store.get(FOCUS_STORE_KEY)) as HelixFocus | undefined
     if (savedFocus) {
       await armFocus($, savedFocus)
@@ -187,6 +220,10 @@ export const register: Register = on => {
     })
     await $.command.register({ name: 'helix-dex', description: 'Show every spinner verb you have collected' })
     await $.command.register({ name: 'helix-demo', description: 'Show every helix spinner animation side by side' })
+    await $.command.register({
+      name: 'helix-color',
+      description: "This project's divider color: /helix-color teal, auto, off, or list",
+    })
     await $.command.register({
       name: 'helix-focus',
       description: 'Start a focus timer in the spinner divider: /helix-focus [minutes], or stop',
@@ -325,6 +362,38 @@ export const register: Register = on => {
     }
   })
 
+  on('command.run', { command: 'helix-color' }, async ($, e) => {
+    const current = await read($, project)
+    if (!current) {
+      return { text: 'No project found for this session yet.' }
+    }
+    const saved = (await read($, projectColors))[current.root]
+    const request = parseColorArgs(e.args)
+    const choose = async (setting: string | undefined) => {
+      const { [current.root]: _previous, ...others } = await read($, projectColors)
+      const next = setting ? { ...others, [current.root]: setting } : others
+      await update($, projectColors, () => next)
+      await $.store.set(PROJECT_COLORS_STORE_KEY, next)
+    }
+    switch (request.action) {
+      case 'show': {
+        const now = saved === 'off' ? 'off' : (saved ?? `${autoColorName(current.name)} (auto)`)
+        return { text: `${current.name}: ${now}. Choose from ${colorNames()}, or auto, or off.` }
+      }
+      case 'invalid':
+        return { text: `No color by that name. Choose from ${colorNames()}, or auto, or off.` }
+      case 'off':
+        await choose('off')
+        return { text: `${current.name}: divider color and name off.` }
+      case 'auto':
+        await choose(undefined)
+        return { text: `${current.name}: back to ${autoColorName(current.name)} (auto).` }
+      case 'set':
+        await choose(request.color)
+        return { text: `${current.name}: ${request.color}.` }
+    }
+  })
+
   on('command.run', { command: 'helix-theme' }, async ($, e) => {
     const choice = e.args.trim().toLowerCase()
     const names = SEASONS.map(season => season.id).join(', ')
@@ -375,6 +444,7 @@ export const register: Register = on => {
       tool: runningTool?.group ?? null,
       failure: await read($, failure),
       focus: await focusProps($),
+      project: await projectProps($),
       text: e.props.message ?? verb,
       rarity: isShowingVerb ? rarity : 'common',
       collect: isShowingVerb ? verb : null,
