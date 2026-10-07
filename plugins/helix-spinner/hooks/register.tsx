@@ -1,13 +1,14 @@
 import { atom, read, update } from 'claude-code'
-import type { Register } from 'claude-code'
+import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import type { HelixAlerts, HelixDex, HelixFailure, HelixRunningTool, HelixTheme, HelixTurn } from '../types'
+import type { HelixAlerts, HelixDex, HelixFailure, HelixFocus, HelixRunningTool, HelixTheme, HelixTurn } from '../types'
 import { drawVerb, pickPastVerb, pickToolVerb, pickVerb, RARE_VERBS, VERBS_BY_MODE, WACKY_VERBS } from './words'
 import type { Rarity } from './words'
 import { TIP_LINES } from './tips'
 import type { TipLine } from './tips'
 import { activeSeasons, hanukkahNight, SEASONS, seasonById } from './seasons'
 import type { Season } from './seasons'
+import { formatRemaining, parseFocusArgs } from './focus'
 import { isFailedCommand } from './reactions'
 import { situationsFor } from './situations'
 import { toolGroupOf } from './tools'
@@ -19,6 +20,7 @@ const tools = atom({ plugin: 'helix-spinner', key: 'tools' } as const, [] as Hel
 // The situations whose tips have already cut in this session.
 const introduced = atom({ plugin: 'helix-spinner', key: 'introduced' } as const, [] as string[])
 const failure = atom({ plugin: 'helix-spinner', key: 'failure' } as const, null as HelixFailure | null)
+const focus = atom({ plugin: 'helix-spinner', key: 'focus' } as const, null as HelixFocus | null)
 
 const alerts = atom({ plugin: 'helix-spinner', key: 'alerts' } as const, 'off' as HelixAlerts)
 
@@ -30,6 +32,8 @@ const DEX_STORE_KEY = 'dex'
 const THEME_STORE_KEY = 'theme'
 const TIPS_STORE_KEY = 'tipsOn'
 const ALERTS_STORE_KEY = 'alerts'
+const FOCUS_STORE_KEY = 'focus'
+const FOCUS_CHIME = 'sounds/focus-done.wav'
 
 const NEXT_ALERTS: Record<HelixAlerts, HelixAlerts> = { off: 'all', all: 'special', special: 'off' }
 const ALERTS_LABELS: Record<HelixAlerts, string> = { all: 'All', special: 'Rare & shiny only', off: 'Off' }
@@ -113,6 +117,45 @@ const demoVerb = (state: (typeof DEMO_STATES)[number]) => {
   return 'tool' in state ? pickToolVerb(state.tool, state.label) : pickVerb(state.mode, state.label)
 }
 
+// The pending end of the focus timer; a reload starts the module over and re-arms it from the store.
+let focusTimer: Timer | undefined
+
+const clearFocus = async ($: EngineInterface) => {
+  focusTimer?.cancel()
+  focusTimer = undefined
+  await update($, focus, () => null)
+  await $.store.delete(FOCUS_STORE_KEY)
+}
+
+const finishFocus = async ($: EngineInterface, finished: HelixFocus) => {
+  const current = await read($, focus)
+  if (current?.endsAt !== finished.endsAt) {
+    return
+  }
+  await clearFocus($)
+  $.ui.toast(`⏱ Focus done: ${finished.minutes} minutes. Take a break!`, { timeoutMs: 10_000 })
+  await $.audio.play({ asset: FOCUS_CHIME }).catch(() => undefined)
+}
+
+const armFocus = async ($: EngineInterface, timer: HelixFocus) => {
+  focusTimer?.cancel()
+  await update($, focus, () => timer)
+  const remaining = timer.endsAt - (await $.clock.now())
+  if (remaining <= 0) {
+    await finishFocus($, timer)
+    return
+  }
+  focusTimer = $.clock.after(remaining, () => {
+    void finishFocus($, timer)
+  })
+}
+
+// What the spinner needs to draw the countdown: the timer, and the hooks' own clock at drawing time.
+const focusProps = async ($: EngineInterface) => {
+  const timer = await read($, focus)
+  return timer ? { startedAt: timer.startedAt, endsAt: timer.endsAt, sentAt: await $.clock.now() } : null
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await update($, agents, () => [])
@@ -134,12 +177,20 @@ export const register: Register = on => {
     if (savedTheme) {
       await update($, theme, () => savedTheme)
     }
+    const savedFocus = (await $.store.get(FOCUS_STORE_KEY)) as HelixFocus | undefined
+    if (savedFocus) {
+      await armFocus($, savedFocus)
+    }
     await $.command.register({
       name: 'helix-theme',
       description: 'Holiday packs for the spinner: auto, off, or a holiday to preview (try "list")',
     })
     await $.command.register({ name: 'helix-dex', description: 'Show every spinner verb you have collected' })
     await $.command.register({ name: 'helix-demo', description: 'Show every helix spinner animation side by side' })
+    await $.command.register({
+      name: 'helix-focus',
+      description: 'Start a focus timer in the spinner divider: /helix-focus [minutes], or stop',
+    })
     return next(e)
   })
 
@@ -249,6 +300,31 @@ export const register: Register = on => {
     return next(e)
   })
 
+  on('command.run', { command: 'helix-focus' }, async ($, e) => {
+    const running = await read($, focus)
+    const now = await $.clock.now()
+    const request = parseFocusArgs(e.args, running !== null)
+    switch (request.action) {
+      case 'status':
+        return { text: `⏱ ${formatRemaining((running?.endsAt ?? now) - now)} left of ${running?.minutes} minutes. /helix-focus stop to cancel.` }
+      case 'stop':
+        if (!running) {
+          return { text: 'No focus timer is running.' }
+        }
+        await clearFocus($)
+        return { text: 'Focus timer stopped.' }
+      case 'invalid':
+        return { text: 'Try /helix-focus, /helix-focus 50 (1 to 180 minutes), or /helix-focus stop.' }
+      case 'start': {
+        const timer = { startedAt: now, endsAt: now + request.minutes * 60_000, minutes: request.minutes }
+        await $.store.set(FOCUS_STORE_KEY, timer)
+        await armFocus($, timer)
+        const restarted = running ? ' (restarted)' : ''
+        return { text: `⏱ Focus timer: ${request.minutes} minutes${restarted}. It fills the divider while Claude works.` }
+      }
+    }
+  })
+
   on('command.run', { command: 'helix-theme' }, async ($, e) => {
     const choice = e.args.trim().toLowerCase()
     const names = SEASONS.map(season => season.id).join(', ')
@@ -298,6 +374,7 @@ export const register: Register = on => {
       mode: e.props.mode,
       tool: runningTool?.group ?? null,
       failure: await read($, failure),
+      focus: await focusProps($),
       text: e.props.message ?? verb,
       rarity: isShowingVerb ? rarity : 'common',
       collect: isShowingVerb ? verb : null,

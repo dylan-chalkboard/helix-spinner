@@ -2,6 +2,7 @@ import type { ClientModule } from 'claude-code'
 
 import type { HelixFailure } from '../types'
 
+import { focusLine } from './focus'
 import { CELLS, DOT_COLUMNS, DOT_ROWS, pingPong, strandRow } from './grid'
 import type { Motion, Pattern } from './grid'
 import { activeSituations, firstUnintroduced, tipAt } from './tip-rotation'
@@ -25,6 +26,7 @@ type Props = {
   situations?: readonly Situation[]
   introduced?: readonly string[]
   failure?: HelixFailure | null
+  focus?: { startedAt: number; endsAt: number; sentAt: number } | null
   tipSeed?: number
   divider?: boolean
   palette?: string[]
@@ -118,8 +120,10 @@ const signatureMarks = (signature: string, width: number, ms: number, night: num
   }
 }
 
-export const dividerCells = (width: number, elapsedMs: number, signature?: string, night = 0) => {
-  const line = Array.from(signature && signature !== 'fireworks' ? DIVIDER.repeat(width) : dividerLine(width, elapsedMs))
+// `base` replaces the plain line underneath (a focus timer's progress bar); marks still draw over it.
+export const dividerCells = (width: number, elapsedMs: number, signature?: string, night = 0, base?: string) => {
+  const plain = signature && signature !== 'fireworks' ? DIVIDER.repeat(width) : dividerLine(width, elapsedMs)
+  const line = Array.from(base ?? plain)
   const marked = new Set<number>()
   for (const [column, character] of signature ? signatureMarks(signature, width, elapsedMs, night) : []) {
     if (column >= 0 && column < width && character !== ' ') {
@@ -323,6 +327,22 @@ const FAILURE_COLOR = '#ef4444'
 // When each instance first drew the current failure, so the red fades on time.
 const failureStarts = new WeakMap<object, { id: string; tick: number }>()
 
+// The hooks' clock against this instance's, per instance: the countdown runs on from the hooks' time.
+const focusSyncs = new WeakMap<object, { sentAt: number; localAt: number }>()
+
+const focusBase = (surface: object, focus: NonNullable<Props['focus']>, width: number) => {
+  if (focusSyncs.get(surface)?.sentAt !== focus.sentAt) {
+    focusSyncs.set(surface, { sentAt: focus.sentAt, localAt: Date.now() })
+  }
+  const sync = focusSyncs.get(surface) ?? { sentAt: focus.sentAt, localAt: Date.now() }
+  const now = sync.sentAt + (Date.now() - sync.localAt)
+  const remainingMs = focus.endsAt - now
+  if (remainingMs <= 0) {
+    return undefined
+  }
+  return focusLine(width, (now - focus.startedAt) / (focus.endsAt - focus.startedAt), remainingMs)
+}
+
 // A situation waiting for its moment, per instance: set while drawing, introduced by the frame timer.
 const newcomers = new WeakMap<object, Situation>()
 
@@ -438,12 +458,13 @@ const Helix: ClientModule<Props, State> = (props, surface) => {
 
   tipRows.set(surface, props.divider ? 2 : 1)
   const dividerWidth = surface.columns > 0 ? surface.columns : FALLBACK_COLUMNS
+  const base = props.focus ? focusBase(surface, props.focus, dividerWidth) : undefined
 
   return (
     <Box flexDirection="column">
       {props.divider && (
         <Box flexDirection="row">
-          {dividerRuns(dividerCells(dividerWidth, tick * FRAME_MS, props.signature, props.night)).map(run =>
+          {dividerRuns(dividerCells(dividerWidth, tick * FRAME_MS, props.signature, props.night, base)).map(run =>
             run.isMark ? (
               <Text dimColor color={isShowingFailure ? FAILURE_COLOR : props.palette?.[1]}>
                 {run.text}

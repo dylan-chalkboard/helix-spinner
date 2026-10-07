@@ -3,6 +3,7 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 import { dividerCells, dividerLine } from './helix'
 import { activeSeasons, easterOf, hanukkahNight, SEASONS, thanksgivingOf } from './seasons'
 import { DOT_COLUMNS, DOT_ROWS } from './grid'
+import { focusLine, formatRemaining, parseFocusArgs } from './focus'
 import { isFailedCommand } from './reactions'
 import { LONG_TURN_MS, situationsFor } from './situations'
 import { activeSituations, firstUnintroduced, tipAt } from './tip-rotation'
@@ -184,6 +185,102 @@ describe('helix spinner', () => {
     expect(isFailedCommand('Read', { isError: true })).toBe(false)
     expect(isFailedCommand('Bash', { deny: 'not allowed' })).toBe(false)
     expect(isFailedCommand('Bash', { isError: true })).toBe(true)
+  })
+
+  const NOON = new Date(2026, 7, 15, 12).getTime()
+
+  const listenForDone = (on: Parameters<TestBody>[1]) => {
+    const toasts: string[] = []
+    const sounds: string[] = []
+    on('ui.toast', (_$, e) => {
+      toasts.push(e.text)
+      return {} as never
+    })
+    on('audio.play', (_$, e) => {
+      sounds.push(e.clip.asset ?? '')
+      return {} as never
+    })
+    return { toasts, sounds }
+  }
+
+  const focusCommand = async ($: Parameters<TestBody>[0], args: string) =>
+    ((await $.command.run({ command: 'helix-focus', args } as never)) as { text?: string }).text ?? ''
+
+  test('focus commands parse and the countdown reads well', () => {
+    expect(parseFocusArgs('', false)).toEqual({ action: 'start', minutes: 25 })
+    expect(parseFocusArgs('', true)).toEqual({ action: 'status' })
+    expect(parseFocusArgs(' 50 ', false)).toEqual({ action: 'start', minutes: 50 })
+    expect(parseFocusArgs('stop', true)).toEqual({ action: 'stop' })
+    for (const bad of ['0', '181', '2.5', 'soon']) {
+      expect(parseFocusArgs(bad, false)).toEqual({ action: 'invalid' })
+    }
+    expect(formatRemaining(14 * 60_000 + 32_000)).toBe('14:32')
+    expect(formatRemaining(65 * 60_000)).toBe('1:05:00')
+    const half = focusLine(40, 0.5, 10 * 60_000)
+    expect(half.length).toBe(40)
+    expect(half.endsWith(' ⏱ 10:00')).toBe(true)
+    expect((half.match(/━/g) ?? []).length).toBe(16)
+  })
+
+  test('a focus timer counts down, then toasts and chimes', async ($, on) => {
+    mock.store(on)
+    const clock = mock.clock(on, { now: NOON })
+    const { toasts, sounds } = listenForDone(on)
+
+    expect(await focusCommand($, '2')).toContain('2 minutes')
+    expect(await focusCommand($, '')).toContain('2:00 left')
+
+    await clock.advance(60_000)
+    expect(toasts).toEqual([])
+    await clock.advance(61_000)
+    expect(toasts).toEqual(['⏱ Focus done: 2 minutes. Take a break!'])
+    expect(sounds).toEqual(['sounds/focus-done.wav'])
+    expect(await focusCommand($, 'stop')).toBe('No focus timer is running.')
+  })
+
+  test('a stopped focus timer never goes off', async ($, on) => {
+    mock.store(on)
+    const clock = mock.clock(on, { now: NOON })
+    const { toasts } = listenForDone(on)
+    await focusCommand($, '1')
+    expect(await focusCommand($, 'stop')).toBe('Focus timer stopped.')
+    await clock.advance(120_000)
+    expect(toasts).toEqual([])
+  })
+
+  test('the divider fills with the focus countdown while Claude works', async ($, on) => {
+    mock.store(on)
+    mock.clock(on, { now: NOON })
+    await focusCommand($, '25')
+    const ui = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Spinner', props: SPINNER })
+    await ui.resize({ columns: 60, rows: 4 })
+    const texts = (await ui.findAll({ type: 'Text', in: 'helix' })).map(t => t.text).join('')
+    expect(texts).toMatch(/─+ ⏱ (25:00|24:5\d)/)
+    await ui.unmount()
+  })
+
+  const reload = async ($: Parameters<TestBody>[0], on: Parameters<TestBody>[1]) => {
+    on('session.start', (_$, e) => e as never)
+    on('command.register', () => ({}) as never)
+    await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true } as never)
+  }
+
+  test('a focus timer picks up again after a reload', async ($, on) => {
+    mock.store(on, { focus: { startedAt: NOON - 60_000, endsAt: NOON + 60_000, minutes: 2 } })
+    const clock = mock.clock(on, { now: NOON })
+    const { toasts } = listenForDone(on)
+    await reload($, on)
+    expect(toasts).toEqual([])
+    await clock.advance(61_000)
+    expect(toasts).toEqual(['⏱ Focus done: 2 minutes. Take a break!'])
+  })
+
+  test('a focus timer that ran out while Claude Code was closed goes off on the next start', async ($, on) => {
+    mock.store(on, { focus: { startedAt: NOON - 600_000, endsAt: NOON - 300_000, minutes: 5 } })
+    mock.clock(on, { now: NOON })
+    const { toasts } = listenForDone(on)
+    await reload($, on)
+    expect(toasts).toEqual(['⏱ Focus done: 5 minutes. Take a break!'])
   })
 
   test('situations match the moment', () => {

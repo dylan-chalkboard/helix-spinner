@@ -10,6 +10,9 @@ export type HelixRunningTool = { id: string; group: HelixToolGroup }
 // The shell command that most recently failed, so the divider can flash red for it.
 export type HelixFailure = { id: string }
 
+// A focus timer running from `/helix-focus`, in epoch milliseconds.
+export type HelixFocus = { startedAt: number; endsAt: number; minutes: number }
+
 export type HelixAlerts = 'all' | 'special' | 'off'
 
 // 'auto' follows the calendar, 'off' turns holiday packs off, anything else forces that pack.
@@ -17,6 +20,6 @@ export type HelixTheme = string
 
 declare module 'claude-code' {
   interface PluginState {
-    'helix-spinner': { turn: HelixTurn | null; dex: HelixDex; alerts: HelixAlerts; tipsOn: boolean; theme: HelixTheme; agents: string[]; tools: HelixRunningTool[]; introduced: string[]; failure: HelixFailure | null }
+    'helix-spinner': { turn: HelixTurn | null; dex: HelixDex; alerts: HelixAlerts; tipsOn: boolean; theme: HelixTheme; agents: string[]; tools: HelixRunningTool[]; introduced: string[]; failure: HelixFailure | null; focus: HelixFocus | null }
   }
 }
