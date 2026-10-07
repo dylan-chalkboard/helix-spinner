@@ -1,6 +1,7 @@
 export type HelixTurn = { turnId: string; startedAt: number; outputTokens: number; inputTokens: number; stepIndex: number }
 
-export type HelixDex = { seen: string[]; shiny: string[] }
+// `motions` holds the rare animations found; absent in a dex saved before they existed.
+export type HelixDex = { seen: string[]; shiny: string[]; motions?: string[] }
 
 export type HelixToolGroup = 'shell' | 'read' | 'search' | 'edit' | 'web' | 'agents' | 'mcp'
 

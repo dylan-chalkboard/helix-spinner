@@ -8,6 +8,7 @@ import { autoColorName, parseColorArgs, PROJECT_COLORS, projectColor, projectNam
 import { isFailedCommand } from './reactions'
 import { LONG_TURN_MS, situationsFor } from './situations'
 import { activeSituations, firstUnintroduced, tipAt } from './tip-rotation'
+import { ALL_RARE_MOTIONS, drawRareMotion, RARE_MOTIONS } from './rare-motions'
 import { COMPACT_MOTION, TOOL_MOTIONS } from './tool-motions'
 import { toolGroupOf } from './tools'
 import { drawVerb, RARE_VERBS, TOOL_VERBS, toPastTense, VERBS_BY_MODE, WACKY_VERBS } from './words'
@@ -463,6 +464,96 @@ describe('helix spinner', () => {
     await ui.unmount()
   })
 
+  test('every group has two rare animations, each one moving and its own', () => {
+    const frame = (pattern: (typeof ALL_RARE_MOTIONS)[number]['pattern'], t: number) =>
+      Array.from({ length: DOT_COLUMNS * DOT_ROWS }, (_, index) =>
+        pattern.isLit(index % DOT_COLUMNS, Math.floor(index / DOT_COLUMNS), t) ? '#' : '.',
+      ).join('')
+    const groups = ['thinking', 'requesting', 'responding', 'tool-input', 'tool-use', 'shell', 'read', 'search', 'edit', 'web', 'agents', 'mcp', 'compacting']
+    expect(Object.keys(RARE_MOTIONS).sort()).toEqual([...groups].sort())
+    for (const group of groups) {
+      expect(RARE_MOTIONS[group]?.length).toBe(2)
+    }
+    const timelines = ALL_RARE_MOTIONS.map(({ pattern }) => [0.4, 1.3, 2.2, 3.1].map(t => frame(pattern, t)))
+    for (const timeline of timelines) {
+      expect(timeline.join('')).toContain('#')
+      expect(new Set(timeline).size).toBeGreaterThan(1)
+    }
+    expect(new Set(timelines.map(timeline => timeline.join('|'))).size).toBe(ALL_RARE_MOTIONS.length)
+    expect(new Set(ALL_RARE_MOTIONS.map(motion => motion.id)).size).toBe(ALL_RARE_MOTIONS.length)
+  })
+
+  test('rare animations turn up about one time in 120, always from their own group', () => {
+    let rare = 0
+    for (let seed = 0; seed < 24_000; seed++) {
+      const motion = drawRareMotion('shell', `turn-${seed}:0`)
+      if (motion) {
+        rare += 1
+        expect(RARE_MOTIONS.shell?.map(entry => entry.id)).toContain(motion.id)
+      }
+    }
+    expect(rare).toBeGreaterThan(130)
+    expect(rare).toBeLessThan(280)
+    expect(drawRareMotion('not-a-group', 'seed')).toBeUndefined()
+  })
+
+  test('a rare animation seen for the first time joins the dex and says so', async ($, on) => {
+    mock.store(on)
+    mock.clock(on, { now: NOON })
+    const { toasts } = listenForDone(on)
+    const ui = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Spinner', props: SPINNER })
+    await ui.post({ motion: 'comet' }, { in: 'helix' })
+    await ui.post({ motion: 'comet' }, { in: 'helix' })
+    await ui.post({ motion: 'not-a-real-one' }, { in: 'helix' })
+    expect(toasts).toEqual([])
+    await ui.unmount()
+
+    const pane = await $.ui.mount({
+      plugin: 'helix-spinner',
+      surface: 'terminal',
+      component: 'Pane',
+      requestId: 'helix-dex',
+      props: { bodyColumns: 80, bodyRows: 40 } as never,
+    })
+    expect(await pane.find({ type: 'Text', text: /· 1\/26 animations$/ })).toBeDefined()
+    expect(await pane.find({ type: 'Text', text: /^Comet, \?\?\?$/ })).toBeDefined()
+    await pane.press({ key: 'alerts' })
+    await pane.unmount()
+
+    const again = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Spinner', props: SPINNER })
+    await again.post({ motion: 'warp' }, { in: 'helix' })
+    expect(toasts).toEqual(['🎞 Rare animation discovered: Warp speed! (2/26 in your Helix Dex)'])
+    await again.unmount()
+  })
+
+  test('the rare demo shows every rare animation in its group colors', async ($, on) => {
+    mock.clock(on, { now: NOON })
+    const ui = await $.ui.mount({
+      plugin: 'helix-spinner',
+      surface: 'terminal',
+      component: 'Pane',
+      requestId: 'helix-demo-rare',
+      props: { bodyColumns: 60, bodyRows: 80 } as never,
+    })
+    for (const motion of ALL_RARE_MOTIONS) {
+      expect(await ui.find({ key: `rare-${motion.id}` })).toBeDefined()
+    }
+    const comet = await ui.findAll({ type: 'Text', in: 'rare-comet' })
+    const pacman = await ui.findAll({ type: 'Text', in: 'rare-pacman' })
+    const firstDotColor = (texts: readonly { text: string; props: Record<string, unknown> }[]) =>
+      texts.find(t => /[\u2801-\u28ff]/.test(t.text))?.props.color
+    expect(firstDotColor(comet)).not.toBe(firstDotColor(pacman))
+    const glyphs = async (key: string) =>
+      (await ui.findAll({ type: 'Text', in: key }))
+        .map(t => t.text)
+        .join('')
+        .replace(/[^\u2800-\u28ff]/g, '')
+        .slice(0, 12)
+    await ui.advance(800)
+    expect(await glyphs('rare-comet')).not.toBe(await glyphs('rare-warp'))
+    await ui.unmount()
+  })
+
   test('tools map to their groups', () => {
     expect(toolGroupOf('Bash')).toBe('shell')
     expect(toolGroupOf('Grep')).toBe('search')
@@ -519,7 +610,7 @@ describe('helix spinner', () => {
       requestId: 'helix-dex',
       props: { bodyColumns: 60, bodyRows: 30 } as never,
     })
-    expect(await dexPane.find({ type: 'Text', text: new RegExp(`^1/\\d+ found · 0/${RARE_VERBS.length} rare · 0 shiny · 0 limited$`) })).toBeDefined()
+    expect(await dexPane.find({ type: 'Text', text: new RegExp(`^1/\\d+ found · 0/${RARE_VERBS.length} rare · 0 shiny · 0 limited · 0/\\d+ animations$`) })).toBeDefined()
     await dexPane.unmount()
     await ui.unmount()
   })

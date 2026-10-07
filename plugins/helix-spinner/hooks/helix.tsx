@@ -8,6 +8,7 @@ import { CELLS, DOT_COLUMNS, DOT_ROWS, pingPong, strandRow } from './grid'
 import type { Motion, Pattern } from './grid'
 import { activeSituations, firstUnintroduced, tipAt } from './tip-rotation'
 import type { Situation, TipLine } from './tip-rotation'
+import { rareMotionById } from './rare-motions'
 import { COMPACT_MOTION, TOOL_MOTIONS } from './tool-motions'
 import type { ToolGroup } from './tools'
 
@@ -30,6 +31,8 @@ type Props = {
   focus?: { startedAt: number; endsAt: number; sentAt: number } | null
   project?: { name: string; branch?: string | null; color: string } | null
   compacting?: boolean
+  rareMotion?: string | null
+  collectMotion?: boolean
   tipSeed?: number
   divider?: boolean
   palette?: string[]
@@ -321,6 +324,10 @@ const reported = new WeakMap<object, string>()
 // The verb on screen now, per instance: posted from the frame timer, once the instance is mounted.
 const showing = new WeakMap<object, { verb: string; rarity: string }>()
 
+// The rare animation on screen now and the last one reported, per instance.
+const showingMotion = new WeakMap<object, string>()
+const reportedMotion = new WeakMap<object, string>()
+
 const TIP_TICKS = TIP_MS / FRAME_MS
 
 // How long the divider stays red after a shell command fails.
@@ -401,9 +408,13 @@ const Helix: ClientModule<Props, State> = (props, surface) => {
 
       const current = showing.get(surface)
       const sighting = current ? `${current.verb}:${current.rarity}` : null
+      const motion = showingMotion.get(surface)
       if (current && sighting && reported.get(surface) !== sighting) {
         reported.set(surface, sighting)
         surface.post(current)
+      } else if (motion && reportedMotion.get(surface) !== motion) {
+        reportedMotion.set(surface, motion)
+        surface.post({ motion })
       }
     })
     // A click anywhere on the tip line moves on to the next one and restarts its 15 seconds.
@@ -426,7 +437,9 @@ const Helix: ClientModule<Props, State> = (props, surface) => {
   const isShowingFailure = failure !== null && failureStart !== undefined && tick - failureStart.tick < FAILURE_TICKS
 
   const phaseMotion = props.tool ? TOOL_MOTIONS[props.tool] : (MOTIONS[props.mode] ?? THINKING)
-  const baseMotion = props.compacting ? COMPACT_MOTION : phaseMotion
+  const groupMotion = props.compacting ? COMPACT_MOTION : phaseMotion
+  const rare = props.rareMotion ? rareMotionById(props.rareMotion) : undefined
+  const baseMotion = rare ? { ...groupMotion, pattern: rare.pattern } : groupMotion
   const motion = props.palette ? { ...baseMotion, palette: props.palette } : baseMotion
   const startedAt = props.startedAt ?? surface.state?.mountedAt ?? Date.now()
   const elapsedMs = Date.now() - startedAt
@@ -438,6 +451,11 @@ const Helix: ClientModule<Props, State> = (props, surface) => {
     showing.set(surface, { verb: props.collect, rarity })
   } else {
     showing.delete(surface)
+  }
+  if (rare && props.collectMotion) {
+    showingMotion.set(surface, rare.id)
+  } else {
+    showingMotion.delete(surface)
   }
 
   const cells = drawFrame(motion, phase, agentCount)

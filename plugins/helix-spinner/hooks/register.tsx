@@ -11,6 +11,7 @@ import type { Season } from './seasons'
 import { formatRemaining, parseFocusArgs } from './focus'
 import { autoColorName, colorNames, parseColorArgs, projectColor, projectNameOf } from './project'
 import { isFailedCommand } from './reactions'
+import { ALL_RARE_MOTIONS, drawRareMotion, RARE_MOTIONS } from './rare-motions'
 import { situationsFor } from './situations'
 import { toolGroupOf } from './tools'
 
@@ -60,6 +61,11 @@ type Sighting = { verb: string; rarity: Rarity }
 const isSighting = (data: unknown): data is Sighting =>
   typeof data === 'object' && data !== null && typeof (data as Sighting).verb === 'string'
 
+type MotionSighting = { motion: string }
+
+const isMotionSighting = (data: unknown): data is MotionSighting =>
+  typeof data === 'object' && data !== null && typeof (data as MotionSighting).motion === 'string'
+
 type Introduction = { introduced: string }
 
 const isIntroduction = (data: unknown): data is Introduction =>
@@ -71,6 +77,25 @@ const bar = (found: number, total: number) => {
 }
 
 const totalVerbs = WACKY_VERBS.length + RARE_VERBS.length
+
+const rareMotionByIdName = (id: string) => ALL_RARE_MOTIONS.find(motion => motion.id === id)?.name
+
+// The Dex's names for the groups the rare animations belong to.
+const MOTION_GROUP_LABELS: Record<string, string> = {
+  thinking: 'Thinking',
+  requesting: 'Requesting',
+  responding: 'Responding',
+  'tool-input': 'Preparing a tool call',
+  'tool-use': 'Running a tool',
+  shell: 'Shell',
+  read: 'Reading',
+  search: 'Searching',
+  edit: 'Editing',
+  web: 'Web',
+  agents: 'Subagents',
+  mcp: 'MCP',
+  compacting: 'Compacting',
+}
 const COLLECTIBLE = new Set([...WACKY_VERBS, ...RARE_VERBS])
 
 // The holiday packs in play: the calendar's on auto, none when off, or the one forced.
@@ -97,6 +122,16 @@ const themeLabel = (setting: HelixTheme) =>
   setting === 'auto' ? 'auto (follows the calendar)' : setting === 'off' ? 'off' : (seasonById(setting)?.name ?? setting)
 
 const DEMO_PANE = 'helix-demo'
+const RARE_DEMO_PANE = 'helix-demo-rare'
+
+// How each group's rare animations are drawn in the demo: the group's own mode, tool or compaction colors.
+const rareDemoLook = (group: string) => {
+  if (group === 'compacting') {
+    return { mode: 'tool-use', tool: null, compacting: true }
+  }
+  const isToolGroup = !['thinking', 'requesting', 'responding', 'tool-input', 'tool-use'].includes(group)
+  return isToolGroup ? { mode: 'tool-use', tool: group, compacting: false } : { mode: group, tool: null, compacting: false }
+}
 
 const DEMO_STATES = [
   { mode: 'thinking', label: 'Thinking' },
@@ -248,7 +283,7 @@ export const register: Register = on => {
       description: 'Holiday packs for the spinner: auto, off, or a holiday to preview (try "list")',
     })
     await $.command.register({ name: 'helix-dex', description: 'Show every spinner verb you have collected' })
-    await $.command.register({ name: 'helix-demo', description: 'Show every helix spinner animation side by side' })
+    await $.command.register({ name: 'helix-demo', description: 'Show every helix spinner animation side by side (/helix-demo rare for the rare ones)' })
     await $.command.register({
       name: 'helix-color',
       description: "This project's divider color: /helix-color teal, auto, off, or list",
@@ -260,9 +295,52 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('command.run', { command: 'helix-demo' }, async $ => {
+  on('command.run', { command: 'helix-demo' }, async ($, e) => {
+    if (e.args.trim().toLowerCase() === 'rare') {
+      await $.ui.open({ id: RARE_DEMO_PANE, title: 'Helix rare animations' })
+      return { text: 'Rare animations demo opened. Spoilers ahead!' }
+    }
     await $.ui.open({ id: DEMO_PANE, title: 'Helix spinner' })
-    return { text: 'Helix spinner demo opened.' }
+    return { text: 'Helix spinner demo opened. /helix-demo rare shows the rare animations.' }
+  })
+
+  on('ui.render', { component: 'Pane', requestId: RARE_DEMO_PANE }, async ($, e) => {
+    const isAnimatable = e.surface === 'terminal' || e.surface === 'desktop'
+    if (!isAnimatable) {
+      const { Text } = $.ui.resolve(e)
+      return <Text dimColor>The helix animations draw in the terminal and the desktop app.</Text>
+    }
+    const { Box, Button, Client, Text } = $.ui.resolve(e)
+    return (
+      <Box flexDirection="column">
+        {Object.entries(RARE_MOTIONS).flatMap(([group, motions]) =>
+          motions.map(motion => (
+            <Box flexDirection="column" marginBottom={1}>
+              <Text dimColor>
+                {MOTION_GROUP_LABELS[group] ?? group} · {motion.name}
+              </Text>
+              <Client
+                key={`rare-${motion.id}`}
+                module="./helix.tsx"
+                props={{
+                  ...rareDemoLook(group),
+                  rareMotion: motion.id,
+                  text: motion.name,
+                  rarity: 'common',
+                  agents: 0,
+                  suffix: '…',
+                  startedAt: null,
+                  outputTokens: 0,
+                  inputTokens: 0,
+                  isDemo: true,
+                }}
+              />
+            </Box>
+          )),
+        )}
+        <Button key="close" label="Close" role="dismiss" onPress={() => $.ui.close({ id: RARE_DEMO_PANE })} />
+      </Box>
+    )
   })
 
   on('ui.render', { component: 'Pane', requestId: DEMO_PANE }, async ($, e) => {
@@ -479,6 +557,9 @@ export const register: Register = on => {
     const runningTool = e.props.mode === 'tool-use' ? newestTool : undefined
     const verbSeed = runningTool ? `${seed}:${runningTool.id}` : seed
     const { verb, rarity } = drawVerb(e.props.mode, verbSeed, season?.verbs, runningTool?.group)
+    const isCompacting = await read($, compacting)
+    const motionGroup = isCompacting ? 'compacting' : (runningTool?.group ?? e.props.mode)
+    const rareMotion = drawRareMotion(motionGroup, verbSeed)
     const isAnimatable = e.surface === 'terminal' || e.surface === 'desktop'
     if (!isAnimatable) {
       return next({ ...e, props: { ...e.props, word: verb } })
@@ -492,7 +573,9 @@ export const register: Register = on => {
       failure: await read($, failure),
       focus: await focusProps($),
       project: await projectProps($),
-      compacting: await read($, compacting),
+      compacting: isCompacting,
+      rareMotion: rareMotion?.id ?? null,
+      collectMotion: true,
       text: e.props.message ?? verb,
       rarity: isShowingVerb ? rarity : 'common',
       collect: isShowingVerb ? verb : null,
@@ -527,6 +610,22 @@ export const register: Register = on => {
 
   // The live spinner's Client posts each verb it actually shows.
   on('ui.message', async ($, e, next) => {
+    if (e.element === 'helix' && isMotionSighting(e.data)) {
+      const { motion } = e.data
+      const found = rareMotionByIdName(motion)
+      const before = await read($, dex)
+      const known = before.motions ?? []
+      if (!found || known.includes(motion)) {
+        return {}
+      }
+      const after: HelixDex = { ...before, motions: [...known, motion] }
+      await update($, dex, () => after)
+      await $.store.set(DEX_STORE_KEY, after)
+      if ((await read($, alerts)) !== 'off') {
+        $.ui.toast(`🎞 Rare animation discovered: ${found}! (${after.motions?.length}/${ALL_RARE_MOTIONS.length} in your Helix Dex)`, { timeoutMs: 6000 })
+      }
+      return {}
+    }
     if (e.element === 'helix' && isIntroduction(e.data)) {
       const { introduced: key } = e.data
       await update($, introduced, keys => (keys.includes(key) ? keys : [...keys, key]))
@@ -574,6 +673,7 @@ export const register: Register = on => {
     const { Box, Button, Text } = $.ui.resolve(e)
     const collection = await read($, dex)
     const seen = new Set(collection.seen)
+    const motionsFound = new Set(collection.motions ?? [])
     const rareFound = RARE_VERBS.filter(verb => seen.has(verb))
     const collectibleFound = collection.seen.filter(verb => COLLECTIBLE.has(verb)).length
     const inSeason = new Set(seasonsFor(await read($, theme), new Date(await $.clock.now())).map(season => season.id))
@@ -603,7 +703,7 @@ export const register: Register = on => {
         </Box>
         <Text> </Text>
         <Text bold>
-          {collectibleFound}/{totalVerbs} found · {rareFound.length}/{RARE_VERBS.length} rare · {collection.shiny.length} shiny · {limitedFound} limited
+          {collectibleFound}/{totalVerbs} found · {rareFound.length}/{RARE_VERBS.length} rare · {collection.shiny.length} shiny · {limitedFound} limited · {motionsFound.size}/{ALL_RARE_MOTIONS.length} animations
         </Text>
         <Text> </Text>
         {SECTIONS.map(({ mode, label, color }) => {
@@ -645,6 +745,23 @@ export const register: Register = on => {
           <Text color="#facc15">
             {collection.shiny.length > 0 ? collection.shiny.join(', ') : 'None yet. Any verb can turn up golden, about 1 in 1,000.'}
           </Text>
+        </Box>
+        <Box flexDirection="column" marginBottom={1}>
+          <Text>
+            <Text color="#38bdf8" bold>
+              🎞 Rare animations
+            </Text>
+            <Text dimColor>
+              {' '}
+              {bar(motionsFound.size, ALL_RARE_MOTIONS.length)} {motionsFound.size}/{ALL_RARE_MOTIONS.length}
+            </Text>
+          </Text>
+          {Object.entries(RARE_MOTIONS).map(([group, motions]) => (
+            <Text>
+              <Text dimColor>{MOTION_GROUP_LABELS[group] ?? group}: </Text>
+              <Text color="#38bdf8">{motions.map(motion => (motionsFound.has(motion.id) ? motion.name : '???')).join(', ')}</Text>
+            </Text>
+          ))}
         </Box>
         <Box flexDirection="column" marginBottom={1}>
           <Text color="#fb923c" bold>

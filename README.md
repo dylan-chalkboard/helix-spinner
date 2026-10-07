@@ -20,6 +20,7 @@ A Claude Code mod that replaces the "thinking" spinner with something much more 
   one too ("Hornswoggled for 12s").
 - **Rare and shiny verbs:** 20 secret rare verbs in rainbow, and any verb can turn up golden
   with sparkles (about 1 in 1,000).
+- **Rare animations:** about 1 in 120 times, the animation is swapped for one of 26 rare ones (a comet, Pac-Man, a space invader, fireworks and more), two for every phase and tool, in that phase's own colors.
 - **Helix Dex:** `/helix-dex` shows every verb you have collected, across sessions.
 - **Tips line:** Claude Code tips, weird-but-true facts, tech history and self-care reminders,
   changing every 15 seconds. In fullscreen mode, click the line to skip ahead.
@@ -47,7 +48,7 @@ claude plugin update helix-spinner@helix-spinner
 | Command | What it does |
 | --- | --- |
 | `/helix-dex` | Your verb collection, plus switches for new-verb alerts (off by default) and the tips line (on by default) |
-| `/helix-demo` | Every animation side by side |
+| `/helix-demo` | Every animation side by side. `/helix-demo rare` shows the rare ones (spoilers!) |
 | `/helix-color [color]` | This project's divider color and name, so you can tell sessions apart. Picks one automatically; `/helix-color teal` pins one, `auto` goes back, `off` hides it |
 | `/helix-focus [minutes]` | A focus timer (25 minutes by default) that fills the spinner's divider while Claude works, with a toast and a soft chime when it's done. `/helix-focus stop` cancels it |
 
