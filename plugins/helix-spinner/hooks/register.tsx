@@ -1,19 +1,24 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { HelixAlerts, HelixDex, HelixRunningTool, HelixTheme, HelixTurn } from '../types'
+import type { HelixAlerts, HelixDex, HelixFailure, HelixRunningTool, HelixTheme, HelixTurn } from '../types'
 import { drawVerb, pickPastVerb, pickToolVerb, pickVerb, RARE_VERBS, VERBS_BY_MODE, WACKY_VERBS } from './words'
 import type { Rarity } from './words'
 import { TIP_LINES } from './tips'
 import type { TipLine } from './tips'
 import { activeSeasons, hanukkahNight, SEASONS, seasonById } from './seasons'
 import type { Season } from './seasons'
+import { isFailedCommand } from './reactions'
+import { situationsFor } from './situations'
 import { toolGroupOf } from './tools'
 
 const turn = atom({ plugin: 'helix-spinner', key: 'turn' } as const, null as HelixTurn | null)
 const dex = atom({ plugin: 'helix-spinner', key: 'dex' } as const, { seen: [], shiny: [] } as HelixDex)
 const agents = atom({ plugin: 'helix-spinner', key: 'agents' } as const, [] as string[])
 const tools = atom({ plugin: 'helix-spinner', key: 'tools' } as const, [] as HelixRunningTool[])
+// The situations whose tips have already cut in this session.
+const introduced = atom({ plugin: 'helix-spinner', key: 'introduced' } as const, [] as string[])
+const failure = atom({ plugin: 'helix-spinner', key: 'failure' } as const, null as HelixFailure | null)
 
 const alerts = atom({ plugin: 'helix-spinner', key: 'alerts' } as const, 'off' as HelixAlerts)
 
@@ -44,6 +49,11 @@ type Sighting = { verb: string; rarity: Rarity }
 
 const isSighting = (data: unknown): data is Sighting =>
   typeof data === 'object' && data !== null && typeof (data as Sighting).verb === 'string'
+
+type Introduction = { introduced: string }
+
+const isIntroduction = (data: unknown): data is Introduction =>
+  typeof data === 'object' && data !== null && typeof (data as Introduction).introduced === 'string'
 
 const bar = (found: number, total: number) => {
   const filled = total === 0 ? 0 : Math.round((found / total) * BAR_WIDTH)
@@ -107,6 +117,7 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await update($, agents, () => [])
     await update($, tools, () => [])
+    await update($, introduced, () => [])
     const saved = (await $.store.get(DEX_STORE_KEY)) as HelixDex | undefined
     if (saved) {
       await update($, dex, () => saved)
@@ -178,22 +189,32 @@ export const register: Register = on => {
     const startedAt = await $.clock.now()
     await update($, turn, () => ({ turnId: e.turnId, startedAt, outputTokens: 0, inputTokens: 0, stepIndex: 0 }))
     await update($, tools, () => [])
+    await update($, failure, () => null)
     return next(e)
   })
 
-  // Tracks which tools the main loop is running, so the spinner can wear the newest one's look.
+  // Tracks which tools the main loop is running, so the spinner can wear the newest one's look,
+  // and notes a failed shell command so the divider can flash red.
   on('tool.call', async ($, e, next) => {
-    const group = toolGroupOf(e.tool)
     const isMainLoop = e.agentId === undefined
-    if (!group || !isMainLoop) {
+    if (!isMainLoop) {
       return next(e)
     }
+    const group = toolGroupOf(e.tool)
     const id = e.tool_use_id ?? `${e.tool}:${await $.clock.now()}`
-    await update($, tools, running => [...running, { id, group }])
+    if (group) {
+      await update($, tools, running => [...running, { id, group }])
+    }
     try {
-      return await next(e)
+      const result = await next(e)
+      if (isFailedCommand(e.tool, result)) {
+        await update($, failure, () => ({ id }))
+      }
+      return result
     } finally {
-      await update($, tools, running => running.filter(tool => tool.id !== id))
+      if (group) {
+        await update($, tools, running => running.filter(tool => tool.id !== id))
+      }
     }
   })
 
@@ -276,6 +297,7 @@ export const register: Register = on => {
     const row = {
       mode: e.props.mode,
       tool: runningTool?.group ?? null,
+      failure: await read($, failure),
       text: e.props.message ?? verb,
       rarity: isShowingVerb ? rarity : 'common',
       collect: isShowingVerb ? verb : null,
@@ -284,7 +306,13 @@ export const register: Register = on => {
       startedAt: current?.startedAt ?? null,
       outputTokens: current?.outputTokens ?? 0,
       inputTokens: current?.inputTokens ?? 0,
-      tips: (await read($, tipsOn)) ? withSeasonLines(TIP_LINES, season) : [],
+      ...((await read($, tipsOn))
+        ? {
+            tips: withSeasonLines(TIP_LINES, season),
+            situations: situationsFor({ tool: runningTool?.group, contextTokens: current?.inputTokens ?? 0, now }),
+            introduced: await read($, introduced),
+          }
+        : { tips: [] }),
       ...(season && {
         palette: season.palette,
         signature: season.signature,
@@ -304,6 +332,11 @@ export const register: Register = on => {
 
   // The live spinner's Client posts each verb it actually shows.
   on('ui.message', async ($, e, next) => {
+    if (e.element === 'helix' && isIntroduction(e.data)) {
+      const { introduced: key } = e.data
+      await update($, introduced, keys => (keys.includes(key) ? keys : [...keys, key]))
+      return {}
+    }
     const isSpinnerSighting = e.element === 'helix' && isSighting(e.data)
     if (!isSpinnerSighting) {
       return next(e)

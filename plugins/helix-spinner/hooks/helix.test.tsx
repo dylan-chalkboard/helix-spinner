@@ -3,6 +3,9 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 import { dividerCells, dividerLine } from './helix'
 import { activeSeasons, easterOf, hanukkahNight, SEASONS, thanksgivingOf } from './seasons'
 import { DOT_COLUMNS, DOT_ROWS } from './grid'
+import { isFailedCommand } from './reactions'
+import { LONG_TURN_MS, situationsFor } from './situations'
+import { activeSituations, firstUnintroduced, tipAt } from './tip-rotation'
 import { TOOL_MOTIONS } from './tool-motions'
 import { toolGroupOf } from './tools'
 import { drawVerb, RARE_VERBS, TOOL_VERBS, toPastTense, VERBS_BY_MODE, WACKY_VERBS } from './words'
@@ -114,6 +117,98 @@ describe('helix spinner', () => {
     await ui.redraw(props)
     expect(await rowText(ui)).toMatch(pattern(VERBS_BY_MODE['tool-use'] ?? []))
     await ui.unmount()
+  })
+
+  // Before the tool starts, the tip line is skipped 0 or 1 times, so the rotation alone
+  // would land on a regular line in one of the two runs: only the cut-in shows the tool tip in both.
+  for (const skips of [0, 1]) {
+    test(`a running tool cuts in with a tip about it (${skips} skip${skips === 1 ? '' : 's'} before)`, async ($, on) => {
+      mock.store(on)
+      mock.clock(on, { now: new Date(2026, 7, 15, 12).getTime() })
+      let finish = () => {}
+      const finished = new Promise<void>(resolve => {
+        finish = resolve
+      })
+      on('tool.call', async () => {
+        await finished
+        return { result: 'done' } as never
+      })
+      const props = { ...SPINNER, mode: 'tool-use' } as const
+      const ui = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Spinner', props })
+      for (let skip = 0; skip < skips; skip++) {
+        await ui.pointer({ type: 'down', x: 4, y: 2, button: 'left' })
+      }
+
+      const call = $.tool.call({ tool: 'Grep', pattern: 'helix' } as never)
+      await ui.advance(100)
+      await ui.redraw(props)
+      await ui.advance(100)
+      expect(await rowText(ui)).toContain('Tip: Know where something lives?')
+
+      finish()
+      await call
+      await ui.unmount()
+    })
+  }
+
+  const redDivider = async (ui: { findAll: (q: { type: string; in: string }) => Promise<readonly { text: string; props: Record<string, unknown> }[]> }) =>
+    (await ui.findAll({ type: 'Text', in: 'helix' })).some(t => t.props.color === '#ef4444' && /^[─━]+$/.test(t.text))
+
+  type TestBody = Extract<Parameters<typeof test>[1], (...args: never) => unknown>
+
+  const afterCommand = async ($: Parameters<TestBody>[0], on: Parameters<TestBody>[1], call: object, answer: object) => {
+    mock.store(on)
+    mock.clock(on, { now: new Date(2026, 7, 15, 12).getTime() })
+    on('tool.call', async () => answer as never)
+    const props = { ...SPINNER, mode: 'responding' } as const
+    const ui = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Spinner', props })
+    await $.tool.call(call as never)
+    await ui.redraw(props)
+    await ui.advance(100)
+    return { ui, props }
+  }
+
+  test('a failed shell command turns the divider red for a moment', async ($, on) => {
+    const { ui } = await afterCommand($, on, { tool: 'Bash', command: 'npm test' }, { result: 'boom', text: 'boom', isError: true })
+    expect(await redDivider(ui)).toBe(true)
+    expect(await rowText(ui)).toMatch(/^[\u2800-\u28ff]{12} /)
+    await ui.advance(2500)
+    expect(await redDivider(ui)).toBe(false)
+    await ui.unmount()
+  })
+
+  test('a passing command or another failed tool leaves the divider alone', async ($, on) => {
+    const passing = await afterCommand($, on, { tool: 'Bash', command: 'npm test' }, { result: { stdout: 'ok', stderr: '' }, text: 'ok' })
+    expect(await redDivider(passing.ui)).toBe(false)
+    await passing.ui.unmount()
+    expect(isFailedCommand('Read', { isError: true })).toBe(false)
+    expect(isFailedCommand('Bash', { deny: 'not allowed' })).toBe(false)
+    expect(isFailedCommand('Bash', { isError: true })).toBe(true)
+  })
+
+  test('situations match the moment', () => {
+    const saturdayNoon = new Date(2026, 7, 15, 12)
+    const keys = (input: Parameters<typeof situationsFor>[0]) => situationsFor(input).map(situation => situation.key)
+    expect(keys({ contextTokens: 0, now: saturdayNoon })).toEqual(['long-turn'])
+    expect(keys({ tool: 'edit', contextTokens: 200_000, now: saturdayNoon })).toEqual(['tool:edit', 'big-context', 'long-turn'])
+    expect(keys({ contextTokens: 0, now: new Date(2026, 7, 15, 23, 30) })).toContain('late-night')
+    expect(keys({ contextTokens: 0, now: new Date(2026, 7, 17, 9) })).toContain('monday-morning')
+    expect(keys({ contextTokens: 0, now: new Date(2026, 7, 21, 16) })).toContain('friday-afternoon')
+  })
+
+  test('a long turn brings its reminders only once it runs long', () => {
+    const situations = situationsFor({ contextTokens: 0, now: new Date(2026, 7, 15, 12) })
+    expect(activeSituations(situations, 30_000)).toEqual([])
+    expect(activeSituations(situations, LONG_TURN_MS).map(situation => situation.key)).toEqual(['long-turn'])
+  })
+
+  test('situation lines take every other slot and each cuts in once', () => {
+    const regular = [{ kind: 'Fun fact', text: 'a' }, { kind: 'Fun fact', text: 'b' }]
+    const active = [{ key: 'tool:shell', after: 0, lines: [{ kind: 'Tip', text: 'x' }] }]
+    expect([0, 1, 2, 3].map(index => tipAt(regular, active, index)?.text)).toEqual(['x', 'a', 'x', 'b'])
+    expect([0, 1, 2].map(index => tipAt(regular, [], index)?.text)).toEqual(['a', 'b', 'a'])
+    expect(firstUnintroduced(active, [])?.key).toBe('tool:shell')
+    expect(firstUnintroduced(active, ['tool:shell'])).toBeUndefined()
   })
 
   test('tools map to their groups', () => {

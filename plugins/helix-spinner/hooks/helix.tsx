@@ -1,7 +1,11 @@
 import type { ClientModule } from 'claude-code'
 
+import type { HelixFailure } from '../types'
+
 import { CELLS, DOT_COLUMNS, DOT_ROWS, pingPong, strandRow } from './grid'
 import type { Motion, Pattern } from './grid'
+import { activeSituations, firstUnintroduced, tipAt } from './tip-rotation'
+import type { Situation, TipLine } from './tip-rotation'
 import { TOOL_MOTIONS } from './tool-motions'
 import type { ToolGroup } from './tools'
 
@@ -17,14 +21,18 @@ type Props = {
   rarity?: 'common' | 'rare' | 'shiny'
   collect?: string | null
   agents?: number
-  tips?: readonly { kind: string; text: string; color?: string }[]
+  tips?: readonly TipLine[]
+  situations?: readonly Situation[]
+  introduced?: readonly string[]
+  failure?: HelixFailure | null
   tipSeed?: number
   divider?: boolean
   palette?: string[]
   signature?: string
   night?: number
 }
-type State = { tick: number; mountedAt: number; phase: number; tipIndex: number; tipChangedTick: number }
+// `pinned` is a situation's first line, cutting in until the next change of tip.
+type State = { tick: number; mountedAt: number; phase: number; tipIndex: number; tipChangedTick: number; pinned: TipLine | null }
 
 const FRAME_MS = 40
 const TIP_MS = 15_000
@@ -308,6 +316,19 @@ const showing = new WeakMap<object, { verb: string; rarity: string }>()
 
 const TIP_TICKS = TIP_MS / FRAME_MS
 
+// How long the divider stays red after a shell command fails.
+const FAILURE_TICKS = 2000 / FRAME_MS
+const FAILURE_COLOR = '#ef4444'
+
+// When each instance first drew the current failure, so the red fades on time.
+const failureStarts = new WeakMap<object, { id: string; tick: number }>()
+
+// A situation waiting for its moment, per instance: set while drawing, introduced by the frame timer.
+const newcomers = new WeakMap<object, Situation>()
+
+// The situations each instance has already introduced, so each cuts in once.
+const introducedHere = new WeakMap<object, Set<string>>()
+
 const isSending = (mode: string) => mode === 'requesting'
 
 // ↑ while the request goes up (the context sent), ↓ for what the model has written back.
@@ -333,17 +354,26 @@ const Helix: ClientModule<Props, State> = (props, surface) => {
 
   if (surface.state === undefined) {
     const mountedAt = Date.now()
-    surface.setState({ tick: 0, mountedAt, phase: 0, tipIndex: 0, tipChangedTick: 0 })
+    const initial: State = { tick: 0, mountedAt, phase: 0, tipIndex: 0, tipChangedTick: 0, pinned: null }
+    surface.setState(initial)
     surface.every(FRAME_MS, () => {
-      const state = surface.state ?? { tick: 0, mountedAt, phase: 0, tipIndex: 0, tipChangedTick: 0 }
+      const state = surface.state ?? initial
       const tick = state.tick + 1
+      const newcomer = newcomers.get(surface)
+      const seen = introducedHere.get(surface) ?? new Set<string>()
+      const isIntroducing = newcomer !== undefined && !seen.has(newcomer.key)
       const isTipDue = tick - state.tipChangedTick >= TIP_TICKS
+      if (isIntroducing) {
+        introducedHere.set(surface, seen.add(newcomer.key))
+        surface.post({ introduced: newcomer.key })
+      }
       surface.setState({
         ...state,
         tick,
         phase: state.phase + (rates.get(surface) ?? 0.1),
-        tipIndex: isTipDue ? state.tipIndex + 1 : state.tipIndex,
-        tipChangedTick: isTipDue ? tick : state.tipChangedTick,
+        tipIndex: isTipDue && !isIntroducing ? state.tipIndex + 1 : state.tipIndex,
+        tipChangedTick: isTipDue || isIntroducing ? tick : state.tipChangedTick,
+        pinned: isIntroducing ? (newcomer.lines[0] ?? null) : isTipDue ? null : state.pinned,
       })
 
       const current = showing.get(surface)
@@ -358,12 +388,20 @@ const Helix: ClientModule<Props, State> = (props, surface) => {
       const state = surface.state
       const isTipLineClick = event.type === 'down' && event.y === (tipRows.get(surface) ?? 1)
       if (state && isTipLineClick) {
-        surface.setState({ ...state, tipIndex: state.tipIndex + 1, tipChangedTick: state.tick })
+        surface.setState({ ...state, tipIndex: state.tipIndex + 1, tipChangedTick: state.tick, pinned: null })
       }
     })
   }
 
   const phase = surface.state?.phase ?? 0
+  const tick = surface.state?.tick ?? 0
+  const failure = props.failure ?? null
+  if (failure && failureStarts.get(surface)?.id !== failure.id) {
+    failureStarts.set(surface, { id: failure.id, tick })
+  }
+  const failureStart = failureStarts.get(surface)
+  const isShowingFailure = failure !== null && failureStart !== undefined && tick - failureStart.tick < FAILURE_TICKS
+
   const baseMotion = props.tool ? TOOL_MOTIONS[props.tool] : (MOTIONS[props.mode] ?? THINKING)
   const motion = props.palette ? { ...baseMotion, palette: props.palette } : baseMotion
   const startedAt = props.startedAt ?? surface.state?.mountedAt ?? Date.now()
@@ -388,8 +426,15 @@ const Helix: ClientModule<Props, State> = (props, surface) => {
     stats.push(tokens)
   }
 
-  const tips = props.tips ?? []
-  const tip = tips.length > 0 ? tips[((surface.state?.tipIndex ?? 0) + (props.tipSeed ?? 0)) % tips.length] : undefined
+  const active = activeSituations(props.situations ?? [], elapsedMs)
+  const newcomer = firstUnintroduced(active, [...(props.introduced ?? []), ...(introducedHere.get(surface) ?? [])])
+  if (newcomer) {
+    newcomers.set(surface, newcomer)
+  } else {
+    newcomers.delete(surface)
+  }
+  const tipIndex = (surface.state?.tipIndex ?? 0) + (props.tipSeed ?? 0)
+  const tip = surface.state?.pinned ?? tipAt(props.tips ?? [], active, tipIndex)
 
   tipRows.set(surface, props.divider ? 2 : 1)
   const dividerWidth = surface.columns > 0 ? surface.columns : FALLBACK_COLUMNS
@@ -398,13 +443,15 @@ const Helix: ClientModule<Props, State> = (props, surface) => {
     <Box flexDirection="column">
       {props.divider && (
         <Box flexDirection="row">
-          {dividerRuns(dividerCells(dividerWidth, (surface.state?.tick ?? 0) * FRAME_MS, props.signature, props.night)).map(run =>
+          {dividerRuns(dividerCells(dividerWidth, tick * FRAME_MS, props.signature, props.night)).map(run =>
             run.isMark ? (
-              <Text dimColor color={props.palette?.[1]}>
+              <Text dimColor color={isShowingFailure ? FAILURE_COLOR : props.palette?.[1]}>
                 {run.text}
               </Text>
             ) : (
-              <Text dimColor>{run.text}</Text>
+              <Text dimColor={!isShowingFailure} color={isShowingFailure ? FAILURE_COLOR : undefined}>
+                {run.text}
+              </Text>
             ),
           )}
         </Box>
