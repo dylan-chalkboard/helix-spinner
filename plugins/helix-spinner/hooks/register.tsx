@@ -1,17 +1,19 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { HelixAlerts, HelixDex, HelixTheme, HelixTurn } from '../types'
-import { drawVerb, pickPastVerb, pickVerb, RARE_VERBS, VERBS_BY_MODE, WACKY_VERBS } from './words'
+import type { HelixAlerts, HelixDex, HelixRunningTool, HelixTheme, HelixTurn } from '../types'
+import { drawVerb, pickPastVerb, pickToolVerb, pickVerb, RARE_VERBS, VERBS_BY_MODE, WACKY_VERBS } from './words'
 import type { Rarity } from './words'
 import { TIP_LINES } from './tips'
 import type { TipLine } from './tips'
 import { activeSeasons, hanukkahNight, SEASONS, seasonById } from './seasons'
 import type { Season } from './seasons'
+import { toolGroupOf } from './tools'
 
 const turn = atom({ plugin: 'helix-spinner', key: 'turn' } as const, null as HelixTurn | null)
 const dex = atom({ plugin: 'helix-spinner', key: 'dex' } as const, { seen: [], shiny: [] } as HelixDex)
 const agents = atom({ plugin: 'helix-spinner', key: 'agents' } as const, [] as string[])
+const tools = atom({ plugin: 'helix-spinner', key: 'tools' } as const, [] as HelixRunningTool[])
 
 const alerts = atom({ plugin: 'helix-spinner', key: 'alerts' } as const, 'off' as HelixAlerts)
 
@@ -82,14 +84,29 @@ const DEMO_STATES = [
   { mode: 'responding', label: 'Responding' },
   { mode: 'tool-input', label: 'Preparing a tool call' },
   { mode: 'tool-use', label: 'Running a tool' },
+  { mode: 'tool-use', label: 'Running a shell command', tool: 'shell' },
+  { mode: 'tool-use', label: 'Reading a file', tool: 'read' },
+  { mode: 'tool-use', label: 'Searching', tool: 'search' },
+  { mode: 'tool-use', label: 'Editing a file', tool: 'edit' },
+  { mode: 'tool-use', label: 'On the web', tool: 'web' },
+  { mode: 'tool-use', label: 'Running a subagent', tool: 'agents' },
+  { mode: 'tool-use', label: 'Calling an MCP tool', tool: 'mcp' },
   { mode: 'responding', label: 'Rare verb', text: RARE_VERBS[1], rarity: 'rare' },
   { mode: 'thinking', label: 'Shiny verb', rarity: 'shiny' },
   { mode: 'tool-use', label: 'Two subagents running', agents: 2 },
 ] as const
 
+const demoVerb = (state: (typeof DEMO_STATES)[number]) => {
+  if ('text' in state) {
+    return state.text
+  }
+  return 'tool' in state ? pickToolVerb(state.tool, state.label) : pickVerb(state.mode, state.label)
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await update($, agents, () => [])
+    await update($, tools, () => [])
     const saved = (await $.store.get(DEX_STORE_KEY)) as HelixDex | undefined
     if (saved) {
       await update($, dex, () => saved)
@@ -139,7 +156,8 @@ export const register: Register = on => {
               module="./helix.tsx"
               props={{
                 mode: state.mode,
-                text: ('text' in state ? state.text : undefined) ?? pickVerb(state.mode, state.label),
+                tool: 'tool' in state ? state.tool : null,
+                text: demoVerb(state),
                 rarity: 'rarity' in state ? state.rarity : 'common',
                 agents: 'agents' in state ? state.agents : 0,
                 suffix: '…',
@@ -159,7 +177,24 @@ export const register: Register = on => {
   on('turn.start', async ($, e, next) => {
     const startedAt = await $.clock.now()
     await update($, turn, () => ({ turnId: e.turnId, startedAt, outputTokens: 0, inputTokens: 0, stepIndex: 0 }))
+    await update($, tools, () => [])
     return next(e)
+  })
+
+  // Tracks which tools the main loop is running, so the spinner can wear the newest one's look.
+  on('tool.call', async ($, e, next) => {
+    const group = toolGroupOf(e.tool)
+    const isMainLoop = e.agentId === undefined
+    if (!group || !isMainLoop) {
+      return next(e)
+    }
+    const id = e.tool_use_id ?? `${e.tool}:${await $.clock.now()}`
+    await update($, tools, running => [...running, { id, group }])
+    try {
+      return await next(e)
+    } finally {
+      await update($, tools, running => running.filter(tool => tool.id !== id))
+    }
   })
 
   on('turn.step', async function* ($, e, next) {
@@ -227,7 +262,10 @@ export const register: Register = on => {
     const now = new Date(await $.clock.now())
     const seasons = seasonsFor(await read($, theme), now)
     const season = seasons[seedNumber(current?.turnId ?? seed) % Math.max(1, seasons.length)]
-    const { verb, rarity } = drawVerb(e.props.mode, seed, season?.verbs)
+    const newestTool = (await read($, tools)).at(-1)
+    const runningTool = e.props.mode === 'tool-use' ? newestTool : undefined
+    const verbSeed = runningTool ? `${seed}:${runningTool.id}` : seed
+    const { verb, rarity } = drawVerb(e.props.mode, verbSeed, season?.verbs, runningTool?.group)
     const isAnimatable = e.surface === 'terminal' || e.surface === 'desktop'
     if (!isAnimatable) {
       return next({ ...e, props: { ...e.props, word: verb } })
@@ -237,6 +275,7 @@ export const register: Register = on => {
     const isShowingVerb = e.props.message === null
     const row = {
       mode: e.props.mode,
+      tool: runningTool?.group ?? null,
       text: e.props.message ?? verb,
       rarity: isShowingVerb ? rarity : 'common',
       collect: isShowingVerb ? verb : null,

@@ -1,3 +1,5 @@
+import type { ToolGroup } from './tools'
+
 export const VERBS_BY_MODE: Record<string, readonly string[]> = {
   thinking: [
     'Noodling', 'Cogitating', 'Ruminating', 'Woolgathering', 'Chin-stroking', 'Galaxy-braining',
@@ -84,6 +86,49 @@ export const VERBS_BY_MODE: Record<string, readonly string[]> = {
 
 export const WACKY_VERBS = Object.values(VERBS_BY_MODE).flat()
 
+// While a tool runs, verbs that suit it.
+export const TOOL_VERBS: Record<ToolGroup, readonly string[]> = {
+  shell: [
+    'Shell-cracking', 'Terminal-tapping', 'Pipe-plumbing', 'Command-whispering', 'Prompt-poking', 'Script-wrangling',
+    'Sudo-pleading', 'Cron-wrangling', 'Keyboard-clacking', 'Daemon-summoning', 'Path-spelunking', 'Exit-coding',
+    'Stdout-slurping', 'Shell-scripting', 'Process-herding', 'Flag-fiddling', 'Tab-completing', 'Alias-juggling',
+    'Echo-yodeling',
+  ],
+  read: [
+    'Page-flipping', 'Scroll-unfurling', 'Speed-reading', 'Bookworming', 'Line-skimming', 'Dog-earing',
+    'Spine-cracking', 'Tome-perusing', 'Squint-reading', 'Fine-print-reading', 'Library-lurking', 'Chapter-chomping',
+    'Footnote-following', 'Bookmark-hopping', 'Paragraph-gobbling', 'Text-devouring', 'Index-thumbing',
+    'Codex-consulting', 'Leaf-turning',
+  ],
+  search: [
+    'Needle-haystacking', 'Truffle-sniffing', 'Treasure-hunting', 'Bloodhounding', 'Metal-detecting', 'Sherlocking',
+    'Clue-gathering', 'Magnifying-glassing', 'Couch-cushion-checking', 'Pattern-matching', 'Dowsing', 'Gold-panning',
+    'Deep-diving', 'Rummaging', 'Ferreting', 'Scouring', 'Sonar-pinging', 'Breadcrumb-following',
+  ],
+  edit: [
+    'Quill-scratching', 'Whittling', 'Word-sculpting', 'Line-polishing', 'Typo-squashing', 'Semicolon-sprinkling',
+    'Bracket-balancing', 'Indent-aligning', 'Code-knitting', 'Patch-stitching', 'Diff-darning', 'Ink-splotching',
+    'Pencil-sharpening', 'Eraser-rubbing', 'Copy-editing', 'Wordsmithing', 'Comma-shuffling', 'Margin-tweaking',
+    'Scroll-scribing',
+  ],
+  web: [
+    'Net-casting', 'Treasure-mapping', 'Web-surfing', 'Link-hopping', 'Cyberspace-cruising', 'Tab-hoarding',
+    'Bookmark-collecting', 'Page-fetching', 'Hyperlinking', 'Packet-sailing', 'Dial-up-screeching', 'Modem-singing',
+    'Cloud-hopping', 'Spider-crawling', 'Satellite-bouncing', 'Globe-trotting', 'Server-knocking', 'Wayback-machining',
+  ],
+  agents: [
+    'Minion-dispatching', 'Crew-assembling', 'Team-huddling', 'Delegating', 'Clone-summoning', 'Squad-rallying',
+    'Hive-minding', 'Sidekick-recruiting', 'Helper-herding', 'Orchestra-conducting', 'Relay-racing', 'Party-forming',
+    'Fellowship-forming', 'Swarm-wrangling', 'Posse-gathering', 'Elf-workshopping', 'Baton-passing', 'Huddle-calling',
+  ],
+  mcp: [
+    'Plug-wiggling', 'Bridge-building', 'Portal-opening', 'Socket-snapping', 'Adapter-fiddling', 'Cable-untangling',
+    'Protocol-whispering', 'Dongle-dangling', 'Wire-splicing', 'Port-plugging', 'Extension-cord-stretching',
+    'Antenna-tuning', 'Switchboard-operating', 'Connector-clicking', 'Interface-tickling', 'Relay-flipping',
+    'Circuit-closing', 'Spark-plugging',
+  ],
+}
+
 // Secret: never listed in the dex until found.
 export const RARE_VERBS = [
   'Supercalifragilisticexpialidocious-ing', 'Quantum-noodling', 'Interdimensional-schlepping',
@@ -114,6 +159,11 @@ export const pickVerb = (mode: string, seed: string) => {
   return verbs[hashOf(`${mode}:${seed}`) % verbs.length] ?? 'Bamboozling'
 }
 
+export const pickToolVerb = (group: ToolGroup, seed: string) => {
+  const verbs = TOOL_VERBS[group]
+  return verbs[hashOf(`${group}:${seed}`) % verbs.length] ?? 'Bamboozling'
+}
+
 // The verb a spinner state shows, with its rarity: now and then a secret rare verb, and very rarely a shiny.
 const SEASONAL_ODDS = 3
 
@@ -127,9 +177,10 @@ export const drawVerb = (
   mode: string,
   seed: string,
   seasonal?: readonly string[],
+  tool?: ToolGroup,
 ): { verb: string; rarity: Rarity } => {
   const isRare = hashOf(`rare:${mode}:${seed}`) % RARE_ODDS === 0
-  const regular = seasonalPick(seasonal, `${mode}:${seed}`) ?? pickVerb(mode, seed)
+  const regular = seasonalPick(seasonal, `${mode}:${seed}`) ?? (tool ? pickToolVerb(tool, seed) : pickVerb(mode, seed))
   const verb = isRare ? (RARE_VERBS[hashOf(seed) % RARE_VERBS.length] ?? 'Quantum-noodling') : regular
   const isShiny = hashOf(`shiny:${mode}:${seed}`) % SHINY_ODDS === 0
   return { verb, rarity: isShiny ? 'shiny' : isRare ? 'rare' : 'common' }
@@ -173,6 +224,7 @@ const IRREGULAR_PAST: Record<string, string> = {
   throwing: 'threw',
   catching: 'caught',
   Headshotting: 'Headshot',
+  casting: 'cast',
 }
 
 const VOWELS = 'aeiou'

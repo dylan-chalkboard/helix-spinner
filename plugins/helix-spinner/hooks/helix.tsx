@@ -1,7 +1,13 @@
 import type { ClientModule } from 'claude-code'
 
+import { CELLS, DOT_COLUMNS, DOT_ROWS, pingPong, strandRow } from './grid'
+import type { Motion, Pattern } from './grid'
+import { TOOL_MOTIONS } from './tool-motions'
+import type { ToolGroup } from './tools'
+
 type Props = {
   mode: string
+  tool?: ToolGroup | null
   text: string
   suffix: string
   startedAt: number | null
@@ -20,9 +26,6 @@ type Props = {
 }
 type State = { tick: number; mountedAt: number; phase: number; tipIndex: number; tipChangedTick: number }
 
-const CELLS = 12
-const DOT_COLUMNS = CELLS * 2
-const DOT_ROWS = 4
 const FRAME_MS = 40
 const TIP_MS = 15_000
 const DIVIDER = '─'
@@ -143,20 +146,6 @@ const DOT_BITS = [
   [0x01, 0x02, 0x04, 0x40],
   [0x08, 0x10, 0x20, 0x80],
 ]
-
-// One animation: which braille dots are lit at time t, how deep each column sits
-// (brighter in front), and where its glow centers, all in dot coordinates.
-type Pattern = {
-  isLit: (x: number, y: number, t: number) => boolean
-  depth?: (x: number, t: number) => number
-  focus: (t: number) => number
-}
-
-type Motion = { palette: string[]; speed: number; pattern: Pattern }
-
-const pingPong = (t: number, rate: number) => ((Math.sin(t * rate) + 1) / 2) * (DOT_COLUMNS - 1)
-
-const strandRow = (phase: number) => Math.round(((Math.sin(phase) + 1) / 2) * (DOT_ROWS - 1))
 
 const helix: Pattern = {
   isLit: (x, y, t) => y === strandRow(x * 0.35 - t) || y === strandRow(x * 0.35 - t + Math.PI),
@@ -375,7 +364,7 @@ const Helix: ClientModule<Props, State> = (props, surface) => {
   }
 
   const phase = surface.state?.phase ?? 0
-  const baseMotion = MOTIONS[props.mode] ?? THINKING
+  const baseMotion = props.tool ? TOOL_MOTIONS[props.tool] : (MOTIONS[props.mode] ?? THINKING)
   const motion = props.palette ? { ...baseMotion, palette: props.palette } : baseMotion
   const startedAt = props.startedAt ?? surface.state?.mountedAt ?? Date.now()
   const elapsedMs = Date.now() - startedAt

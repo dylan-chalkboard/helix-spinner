@@ -2,7 +2,10 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 
 import { dividerCells, dividerLine } from './helix'
 import { activeSeasons, easterOf, hanukkahNight, SEASONS, thanksgivingOf } from './seasons'
-import { drawVerb, RARE_VERBS, toPastTense, VERBS_BY_MODE, WACKY_VERBS } from './words'
+import { DOT_COLUMNS, DOT_ROWS } from './grid'
+import { TOOL_MOTIONS } from './tool-motions'
+import { toolGroupOf } from './tools'
+import { drawVerb, RARE_VERBS, TOOL_VERBS, toPastTense, VERBS_BY_MODE, WACKY_VERBS } from './words'
 
 // A day with no holiday pack in season.
 const QUIET_DAY = new Date(2026, 7, 15).getTime()
@@ -62,10 +65,74 @@ describe('helix spinner', () => {
       requestId: 'helix-demo',
       props: { bodyColumns: 60, bodyRows: 20 } as never,
     })
-    for (const label of ['Thinking', 'Requesting', 'Responding', 'Preparing a tool call', 'Running a tool']) {
+    const labels = [
+      'Thinking', 'Requesting', 'Responding', 'Preparing a tool call', 'Running a tool', 'Running a shell command',
+      'Reading a file', 'Searching', 'Editing a file', 'On the web', 'Running a subagent', 'Calling an MCP tool',
+    ]
+    for (const label of labels) {
       expect(await ui.find({ key: `demo-${label}` })).toBeDefined()
     }
     await ui.unmount()
+  })
+
+  test('each tool group draws its own moving animation', () => {
+    const frameAt = (group: keyof typeof TOOL_MOTIONS, t: number) =>
+      Array.from({ length: DOT_ROWS }, (_, y) =>
+        Array.from({ length: DOT_COLUMNS }, (_, x) => (TOOL_MOTIONS[group].pattern.isLit(x, y, t) ? '#' : '.')).join(''),
+      ).join('/')
+    const groups = Object.keys(TOOL_MOTIONS) as (keyof typeof TOOL_MOTIONS)[]
+    const timeline = (group: keyof typeof TOOL_MOTIONS) => [1, 2.5, 4, 6.5].map(t => frameAt(group, t)).join('|')
+    for (const group of groups) {
+      expect(timeline(group)).toContain('#')
+      expect(new Set([1, 2.5, 4, 6.5].map(t => frameAt(group, t))).size).toBeGreaterThan(1)
+    }
+    expect(new Set(groups.map(timeline)).size).toBe(groups.length)
+  })
+
+  test('while a tool runs the spinner wears its look, then goes back', async ($, on) => {
+    mock.store(on)
+    mock.clock(on, { now: QUIET_DAY })
+    let finish = () => {}
+    const finished = new Promise<void>(resolve => {
+      finish = resolve
+    })
+    on('tool.call', async () => {
+      await finished
+      return { result: 'done' } as never
+    })
+    const props = { ...SPINNER, mode: 'tool-use' } as const
+    const ui = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Spinner', props })
+    const pattern = (verbs: readonly string[]) => new RegExp(` (${verbs.map(v => v.replace(/[-]/g, '\\-')).join('|')})… `)
+
+    const call = $.tool.call({ tool: 'Grep', pattern: 'helix' } as never)
+    await ui.advance(100)
+    await ui.redraw(props)
+    expect(await rowText(ui)).toMatch(pattern(TOOL_VERBS.search))
+
+    finish()
+    await call
+    await ui.redraw(props)
+    expect(await rowText(ui)).toMatch(pattern(VERBS_BY_MODE['tool-use'] ?? []))
+    await ui.unmount()
+  })
+
+  test('tools map to their groups', () => {
+    expect(toolGroupOf('Bash')).toBe('shell')
+    expect(toolGroupOf('Grep')).toBe('search')
+    expect(toolGroupOf('Write')).toBe('edit')
+    expect(toolGroupOf('mcp__linear__get_issue')).toBe('mcp')
+    expect(toolGroupOf('TodoWrite')).toBeUndefined()
+  })
+
+  test('tool verbs have clean past tenses and no repeats', () => {
+    const toolVerbs = Object.values(TOOL_VERBS).flat()
+    for (const verb of toolVerbs) {
+      expect(toPastTense(verb)).not.toMatch(/ing$/)
+    }
+    expect(toPastTense('Net-casting')).toBe('Net-cast')
+    const seasonal = SEASONS.flatMap(season => season.verbs)
+    const everything = [...WACKY_VERBS, ...RARE_VERBS, ...seasonal, ...toolVerbs]
+    expect(everything.filter((verb, index) => everything.indexOf(verb) !== index)).toEqual([])
   })
 
   test('verbs turn past tense for the end-of-turn line', () => {
