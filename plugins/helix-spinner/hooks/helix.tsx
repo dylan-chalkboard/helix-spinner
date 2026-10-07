@@ -8,7 +8,7 @@ import { CELLS, DOT_COLUMNS, DOT_ROWS, pingPong, strandRow } from './grid'
 import type { Motion, Pattern } from './grid'
 import { activeSituations, firstUnintroduced, tipAt } from './tip-rotation'
 import type { Situation, TipLine } from './tip-rotation'
-import { TOOL_MOTIONS } from './tool-motions'
+import { COMPACT_MOTION, TOOL_MOTIONS } from './tool-motions'
 import type { ToolGroup } from './tools'
 
 type Props = {
@@ -29,6 +29,7 @@ type Props = {
   failure?: HelixFailure | null
   focus?: { startedAt: number; endsAt: number; sentAt: number } | null
   project?: { name: string; branch?: string | null; color: string } | null
+  compacting?: boolean
   tipSeed?: number
   divider?: boolean
   palette?: string[]
@@ -424,7 +425,8 @@ const Helix: ClientModule<Props, State> = (props, surface) => {
   const failureStart = failureStarts.get(surface)
   const isShowingFailure = failure !== null && failureStart !== undefined && tick - failureStart.tick < FAILURE_TICKS
 
-  const baseMotion = props.tool ? TOOL_MOTIONS[props.tool] : (MOTIONS[props.mode] ?? THINKING)
+  const phaseMotion = props.tool ? TOOL_MOTIONS[props.tool] : (MOTIONS[props.mode] ?? THINKING)
+  const baseMotion = props.compacting ? COMPACT_MOTION : phaseMotion
   const motion = props.palette ? { ...baseMotion, palette: props.palette } : baseMotion
   const startedAt = props.startedAt ?? surface.state?.mountedAt ?? Date.now()
   const elapsedMs = Date.now() - startedAt

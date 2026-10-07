@@ -180,6 +180,34 @@ const mcp: Pattern = {
   },
 }
 
+// Compacting: scattered dots are pulled into the middle and packed into a tight block, then a fresh scatter.
+const SQUEEZE_DOTS = 22
+const SQUEEZE_CYCLE = 6
+const SQUEEZE_GATHER = 4.5
+const BLOCK_WIDTH = 5
+
+const squeeze: Pattern = {
+  isLit: (x, y, t) => {
+    const round = Math.floor(t / SQUEEZE_CYCLE)
+    const gathered = Math.min(1, (t % SQUEEZE_CYCLE) / SQUEEZE_GATHER)
+    const pull = gathered * gathered
+    for (let dot = 0; dot < SQUEEZE_DOTS; dot++) {
+      const fromX = noise(dot, round) * DOT_COLUMNS
+      const fromY = Math.floor(noise(round, dot) * DOT_ROWS)
+      const toX = CENTER - 2 + (dot % BLOCK_WIDTH)
+      const toY = Math.floor(dot / (SQUEEZE_DOTS / DOT_ROWS))
+      const isHere = x === Math.round(fromX + (toX - fromX) * pull) && y === Math.round(fromY + (toY - fromY) * pull)
+      if (isHere) {
+        return true
+      }
+    }
+    return false
+  },
+  focus: () => CENTER,
+}
+
+export const COMPACT_MOTION: Motion = { palette: ['#7c2d12', '#fdba74', '#fff7ed'], speed: 0.1, pattern: squeeze }
+
 export const TOOL_MOTIONS: Record<ToolGroup, Motion> = {
   shell: { palette: ['#14532d', '#22c55e', '#bbf7d0'], speed: 0.1, pattern: shell },
   read: { palette: ['#44403c', '#d6d3d1', '#fafaf9'], speed: 0.1, pattern: read },

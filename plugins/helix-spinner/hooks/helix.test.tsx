@@ -8,7 +8,7 @@ import { autoColorName, parseColorArgs, PROJECT_COLORS, projectColor, projectNam
 import { isFailedCommand } from './reactions'
 import { LONG_TURN_MS, situationsFor } from './situations'
 import { activeSituations, firstUnintroduced, tipAt } from './tip-rotation'
-import { TOOL_MOTIONS } from './tool-motions'
+import { COMPACT_MOTION, TOOL_MOTIONS } from './tool-motions'
 import { toolGroupOf } from './tools'
 import { drawVerb, RARE_VERBS, TOOL_VERBS, toPastTense, VERBS_BY_MODE, WACKY_VERBS } from './words'
 
@@ -73,6 +73,7 @@ describe('helix spinner', () => {
     const labels = [
       'Thinking', 'Requesting', 'Responding', 'Preparing a tool call', 'Running a tool', 'Running a shell command',
       'Reading a file', 'Searching', 'Editing a file', 'On the web', 'Running a subagent', 'Calling an MCP tool',
+      'Compacting the conversation',
     ]
     for (const label of labels) {
       expect(await ui.find({ key: `demo-${label}` })).toBeDefined()
@@ -420,6 +421,46 @@ describe('helix spinner', () => {
     expect([0, 1, 2].map(index => tipAt(regular, [], index)?.text)).toEqual(['a', 'b', 'a'])
     expect(firstUnintroduced(active, [])?.key).toBe('tool:shell')
     expect(firstUnintroduced(active, ['tool:shell'])).toBeUndefined()
+  })
+
+  test('compacting squeezes scattered dots into a packed block', () => {
+    const litColumns = (t: number) =>
+      new Set(
+        Array.from({ length: DOT_COLUMNS * DOT_ROWS }, (_, index) => index)
+          .filter(index => COMPACT_MOTION.pattern.isLit(index % DOT_COLUMNS, Math.floor(index / DOT_COLUMNS), t))
+          .map(index => index % DOT_COLUMNS),
+      )
+    const scattered = litColumns(0)
+    const packed = litColumns(5)
+    expect(Math.max(...scattered) - Math.min(...scattered)).toBeGreaterThan(12)
+    expect(Math.max(...packed) - Math.min(...packed)).toBeLessThan(6)
+  })
+
+  test('the spinner squeezes while the conversation compacts, then goes back', async ($, on) => {
+    mock.store(on)
+    mock.clock(on, { now: NOON })
+    let finish = () => {}
+    const finished = new Promise<void>(resolve => {
+      finish = resolve
+    })
+    on('session.compact', async (_$, e) => {
+      await finished
+      return e as never
+    })
+    const props = { ...SPINNER, message: 'Compacting conversation…', mode: 'tool-use' } as const
+    const ui = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Spinner', props })
+    const isSqueezing = async () => (await ui.find({ key: 'helix' }))?.props.props as { compacting?: boolean } | undefined
+
+    const compaction = $.session.compact({ trigger: 'manual', messages: [{ role: 'user', text: 'hello', toolUses: [], handle: 'm1' }] } as never)
+    await ui.advance(100)
+    await ui.redraw(props)
+    expect((await isSqueezing())?.compacting).toBe(true)
+
+    finish()
+    await compaction
+    await ui.redraw(props)
+    expect((await isSqueezing())?.compacting).toBe(false)
+    await ui.unmount()
   })
 
   test('tools map to their groups', () => {

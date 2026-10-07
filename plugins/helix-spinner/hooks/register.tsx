@@ -24,6 +24,7 @@ const failure = atom({ plugin: 'helix-spinner', key: 'failure' } as const, null 
 const focus = atom({ plugin: 'helix-spinner', key: 'focus' } as const, null as HelixFocus | null)
 const project = atom({ plugin: 'helix-spinner', key: 'project' } as const, null as HelixProject | null)
 // Each project's chosen color by its root folder: a color's name, or 'off'.
+const compacting = atom({ plugin: 'helix-spinner', key: 'compacting' } as const, false)
 const projectColors = atom({ plugin: 'helix-spinner', key: 'projectColors' } as const, {} as Record<string, string>)
 
 const alerts = atom({ plugin: 'helix-spinner', key: 'alerts' } as const, 'off' as HelixAlerts)
@@ -110,6 +111,7 @@ const DEMO_STATES = [
   { mode: 'tool-use', label: 'On the web', tool: 'web' },
   { mode: 'tool-use', label: 'Running a subagent', tool: 'agents' },
   { mode: 'tool-use', label: 'Calling an MCP tool', tool: 'mcp' },
+  { mode: 'tool-use', label: 'Compacting the conversation', text: 'Compacting conversation', compacting: true },
   { mode: 'responding', label: 'Rare verb', text: RARE_VERBS[1], rarity: 'rare' },
   { mode: 'thinking', label: 'Shiny verb', rarity: 'shiny' },
   { mode: 'tool-use', label: 'Two subagents running', agents: 2 },
@@ -214,6 +216,7 @@ export const register: Register = on => {
     await update($, agents, () => [])
     await update($, tools, () => [])
     await update($, introduced, () => [])
+    await update($, compacting, () => false)
     const saved = (await $.store.get(DEX_STORE_KEY)) as HelixDex | undefined
     if (saved) {
       await update($, dex, () => saved)
@@ -282,6 +285,7 @@ export const register: Register = on => {
               props={{
                 mode: state.mode,
                 tool: 'tool' in state ? state.tool : null,
+                compacting: 'compacting' in state,
                 text: demoVerb(state),
                 rarity: 'rarity' in state ? state.rarity : 'common',
                 agents: 'agents' in state ? state.agents : 0,
@@ -306,6 +310,19 @@ export const register: Register = on => {
     await update($, failure, () => null)
     await refreshBranch($)
     return next(e)
+  })
+
+  // While the main conversation compacts, the spinner squeezes its dots together.
+  on('session.compact', async ($, e, next) => {
+    if (e.agentId !== undefined) {
+      return next(e)
+    }
+    await update($, compacting, () => true)
+    try {
+      return await next(e)
+    } finally {
+      await update($, compacting, () => false)
+    }
   })
 
   // Tracks which tools the main loop is running, so the spinner can wear the newest one's look,
@@ -475,6 +492,7 @@ export const register: Register = on => {
       failure: await read($, failure),
       focus: await focusProps($),
       project: await projectProps($),
+      compacting: await read($, compacting),
       text: e.props.message ?? verb,
       rarity: isShowingVerb ? rarity : 'common',
       collect: isShowingVerb ? verb : null,

@@ -23,6 +23,6 @@ export type HelixTheme = string
 
 declare module 'claude-code' {
   interface PluginState {
-    'helix-spinner': { turn: HelixTurn | null; dex: HelixDex; alerts: HelixAlerts; tipsOn: boolean; theme: HelixTheme; agents: string[]; tools: HelixRunningTool[]; introduced: string[]; failure: HelixFailure | null; focus: HelixFocus | null; project: HelixProject | null; projectColors: Record<string, string> }
+    'helix-spinner': { turn: HelixTurn | null; dex: HelixDex; alerts: HelixAlerts; tipsOn: boolean; theme: HelixTheme; agents: string[]; tools: HelixRunningTool[]; introduced: string[]; failure: HelixFailure | null; focus: HelixFocus | null; project: HelixProject | null; projectColors: Record<string, string>; compacting: boolean }
   }
 }
