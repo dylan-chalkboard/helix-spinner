@@ -24,7 +24,7 @@ A Claude Code mod that replaces the "thinking" spinner with something much more 
 - **Helix Dex:** `/helix-dex` shows every verb you have collected, across sessions.
 - **Tips line:** Claude Code tips, weird-but-true facts, tech history and self-care reminders,
   changing every 15 seconds. In fullscreen mode, click the line to skip ahead.
-- **Extras:** time and token counts, and an extra strand for each running subagent.
+- **Extras:** time and token counts, and how many subagents are running.
 
 ## Install
 

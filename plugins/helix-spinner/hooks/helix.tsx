@@ -246,19 +246,7 @@ const gradient = (palette: string[], position: number) => {
   return mix(stops[index] ?? BLACK, stops[index + 1] ?? BLACK, scaled - index)
 }
 
-const MAX_AGENT_STRANDS = 3
-
-// One extra wave per running subagent, each at its own pace and offset.
-const isAgentStrand = (x: number, y: number, t: number, agentCount: number) => {
-  for (let agent = 0; agent < Math.min(agentCount, MAX_AGENT_STRANDS); agent++) {
-    if (y === strandRow(x * 0.5 - t * (1.3 + agent * 0.4) + agent * 2.1)) {
-      return true
-    }
-  }
-  return false
-}
-
-const drawFrame = (motion: Motion, t: number, agentCount: number) => {
+const drawFrame = (motion: Motion, t: number) => {
   const { isLit, depth = () => 0.5, focus } = motion.pattern
   const focusColumn = focus(t)
 
@@ -269,7 +257,7 @@ const drawFrame = (motion: Motion, t: number, agentCount: number) => {
     for (let column = 0; column < 2; column++) {
       const x = cell * 2 + column
       for (let y = 0; y < DOT_ROWS; y++) {
-        if (isLit(x, y, t) || isAgentStrand(x, y, t, agentCount)) {
+        if (isLit(x, y, t)) {
           bits |= DOT_BITS[column]?.[y] ?? 0
         }
       }
@@ -458,7 +446,7 @@ const Helix: ClientModule<Props, State> = (props, surface) => {
     showingMotion.delete(surface)
   }
 
-  const cells = drawFrame(motion, phase, agentCount)
+  const cells = drawFrame(motion, phase)
   const stats = [formatElapsed(elapsedMs)]
   if (agentCount > 0) {
     stats.push(`${agentCount} ${agentCount === 1 ? 'agent' : 'agents'}`)

@@ -573,6 +573,28 @@ describe('helix spinner', () => {
     expect(everything.filter((verb, index) => everything.indexOf(verb) !== index)).toEqual([])
   })
 
+  test('running subagents never draw over the animation', async ($, on) => {
+    mock.clock(on, { now: QUIET_DAY })
+    const ui = await $.ui.mount({
+      plugin: 'helix-spinner',
+      surface: 'terminal',
+      component: 'Pane',
+      requestId: 'helix-demo',
+      props: { bodyColumns: 60, bodyRows: 60 } as never,
+    })
+    const glyphs = async (key: string) =>
+      (await ui.findAll({ type: 'Text', in: key }))
+        .map(t => t.text)
+        .join('')
+        .replace(/[^\u2800-\u28ff]/g, '')
+        .slice(0, 12)
+    for (const ms of [0, 400, 1300]) {
+      await ui.advance(ms)
+      expect(await glyphs('demo-Two subagents running')).toBe(await glyphs('demo-Running a tool'))
+    }
+    await ui.unmount()
+  })
+
   test('verbs turn past tense for the end-of-turn line', () => {
     expect(toPastTense('Hornswoggling')).toBe('Hornswoggled')
     expect(toPastTense('Latke-frying')).toBe('Latke-fried')
