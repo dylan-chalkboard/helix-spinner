@@ -1,6 +1,6 @@
 {
   "name": "helix-spinner",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Replaces the spinner row with a twisting braille helix, a wacky verb and the turn's time and tokens",
   "types": "./types/index.d.ts",
   "author": {
