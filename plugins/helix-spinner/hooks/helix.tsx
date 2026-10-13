@@ -1,6 +1,6 @@
 import type { ClientModule } from 'claude-code'
 
-import type { HelixFailure } from '../types'
+import type { HelixFailure, HelixTapLook, HelixTaps } from '../types'
 
 import { focusLine } from './focus'
 import { withProjectName } from './project'
@@ -11,6 +11,36 @@ import type { Situation, TipLine } from './tip-rotation'
 import { rareMotionById } from './rare-motions'
 import { COMPACT_MOTION, TOOL_MOTIONS } from './tool-motions'
 import type { ToolGroup } from './tools'
+import {
+  addDelta,
+  diffDelta,
+  BUTTON_WIDTH,
+  comboGapMs,
+  critMultiplierFor,
+  critChance,
+  DEFAULT_LOOK,
+  drawButton,
+  formatGain,
+  formatSparks,
+  frenzyMultiplier,
+  GOLD,
+  goldenChancePerSecond,
+  goldenPayout,
+  HEAT_MULTIPLIERS,
+  HEAT_WINDOW_MS,
+  frenzyAtFor,
+  heatOf,
+  luckyEvery,
+  goldenMs,
+  luckyDrop,
+  NO_DELTA,
+  normalizeTaps,
+  sparksOf,
+  sumDeltas,
+  tapsPerTap,
+  turnSparks,
+} from './taps'
+import type { TapDelta, Upgrades } from './taps'
 
 type Props = {
   mode: string
@@ -20,6 +50,8 @@ type Props = {
   startedAt: number | null
   outputTokens: number
   inputTokens: number
+  turnTools?: number
+  workMs?: number
   isDemo?: boolean
   rarity?: 'common' | 'rare' | 'shiny'
   collect?: string | null
@@ -38,6 +70,9 @@ type Props = {
   palette?: string[]
   signature?: string
   night?: number
+  taps?: HelixTaps | null
+  tapAck?: { instance: string; total: TapDelta; menu: number } | null
+  tapLook?: HelixTapLook
 }
 // `pinned` is a situation's first line, cutting in until the next change of tip.
 type State = { tick: number; mountedAt: number; phase: number; tipIndex: number; tipChangedTick: number; pinned: TipLine | null }
@@ -361,6 +396,115 @@ const tokenReadout = (props: Props, elapsedMs: number) => {
   return received > 0 ? `↓ ${formatTokens(received)} tokens` : null
 }
 
+// The tapper's play, per instance: what its taps added, what went to the hooks and is not yet back in the
+// totals they hand over, and the combo, heat and flashes on screen. Times are on the frame clock (ticks × FRAME_MS).
+type Tapper = {
+  instance: string
+  total: TapDelta
+  menu: number
+  postedAt: number
+  combo: number
+  lastTapAt: number
+  recent: number[]
+  fx: { gained: number; at: number; mark: '' | '!' | '★' } | null
+  goldenUntil: number
+}
+const tappers = new WeakMap<object, Tapper>()
+
+// Where the tap strip starts on its row, per instance, while it shows.
+const tapRegions = new WeakMap<object, { row: number; x: number; menuX: number }>()
+
+// The upgrades the hooks last handed over, per instance, for the frame timer's golden rolls.
+const tapUpgrades = new WeakMap<object, Upgrades>()
+
+const READOUT_WIDTH = 23
+// The sparks count and the menu mark at the strip's end: a click there opens the shop.
+const MENU_MARK = ' ☰'
+const MENU_CELLS = 10
+const STRIP_WIDTH = BUTTON_WIDTH + READOUT_WIDTH + MENU_MARK.length
+
+// Until the hooks have it, the tap state goes again every few frames: a post can be replaced before it lands.
+const REPOST_TICKS = 3
+const FX_MS = 450
+// How long the button stays down after a tap, and a golden tap's window.
+const PRESS_MS = 160
+const GOLDEN_ROLL_TICKS = 1000 / FRAME_MS
+
+const newTapper = (): Tapper => ({
+  instance: Math.random().toString(36).slice(2),
+  total: NO_DELTA,
+  menu: 0,
+  postedAt: -Infinity,
+  combo: 0,
+  lastTapAt: -Infinity,
+  recent: [],
+  fx: null,
+  goldenUntil: 0,
+})
+
+const recentTaps = (tapper: Tapper, now: number) => tapper.recent.filter(at => now - at < HEAT_WINDOW_MS)
+
+type TapAck = { instance: string; total: TapDelta; menu: number }
+
+const ackedBy = (tapper: Tapper, ack: TapAck | null | undefined) => (ack?.instance === tapper.instance ? ack : { total: NO_DELTA, menu: 0 })
+
+// The saved totals as the hooks last handed them over, plus the taps still on their way there.
+const totalsOf = (tapper: Tapper, saved: HelixTaps, ack: TapAck | null | undefined) => addDelta(saved, diffDelta(tapper.total, ackedBy(tapper, ack).total))
+
+const isUnacked = (tapper: Tapper, ack: TapAck | null | undefined) => {
+  const acked = ackedBy(tapper, ack)
+  return acked.total.taps < tapper.total.taps || acked.menu < tapper.menu
+}
+
+// Taps past a human pace in one second count for nothing, so an autoclicker gains no more than fast fingers.
+const MAX_TAPS_PER_SECOND = 15
+
+const tap = (tapper: Tapper, totals: HelixTaps, now: number): Tapper => {
+  const upgrades = totals.upgrades
+  if (recentTaps(tapper, now).length >= MAX_TAPS_PER_SECOND) {
+    return tapper
+  }
+  const recent = [...recentTaps(tapper, now), now]
+  const heat = heatOf(recent.length, frenzyAtFor(upgrades))
+  const heatMultiplier = heat === 'frenzy' ? frenzyMultiplier(upgrades.hot ?? 0) : HEAT_MULTIPLIERS[heat]
+  const combo = now - tapper.lastTapAt <= comboGapMs(upgrades.steady ?? 0) ? tapper.combo + 1 : 1
+  const isGolden = now < tapper.goldenUntil
+  const isCrit = Math.random() < critChance(upgrades.crit ?? 0)
+  const gained = tapsPerTap(upgrades.strong ?? 0) * heatMultiplier * (isGolden ? goldenPayout(upgrades.golden ?? 0) : 1) * (isCrit ? critMultiplierFor(upgrades) : 1)
+  const lucky = combo % luckyEvery(upgrades.trigger ?? 0) === 0 ? luckyDrop(upgrades.lucky ?? 0) : 0
+  const delta = { taps: 1, sparks: gained + lucky, bestCombo: combo }
+  return {
+    ...tapper,
+    total: sumDeltas(tapper.total, delta),
+    combo,
+    lastTapAt: now,
+    recent,
+    fx: { gained, at: now, mark: isGolden ? '★' : isCrit ? '!' : '' },
+    goldenUntil: isGolden ? 0 : tapper.goldenUntil,
+  }
+}
+
+// The button, then the gain of the last tap, the combo, and the sparks.
+// Every part keeps a fixed width, so nothing shifts as the numbers change.
+const stripParts = (tapper: Tapper, totals: HelixTaps, liveSparks: number, now: number, look: HelixTapLook) => {
+  const isComboing = tapper.combo >= 3 && now - tapper.lastTapAt <= comboGapMs(totals.upgrades.steady ?? 0)
+  const fx = tapper.fx && now - tapper.fx.at < FX_MS ? tapper.fx : null
+  const isPressed = tapper.fx !== null && now - tapper.fx.at < PRESS_MS
+  const isGolden = now < tapper.goldenUntil
+  // Crits show `!`, golden taps `★`. Gain and combo keep fixed widths however big they get.
+  const gain = (fx ? `+${formatGain(fx.gained)}${fx.mark}` : '').padEnd(7)
+  const combo = (isComboing ? `x${Math.min(tapper.combo, 9999)}` : '').padEnd(5)
+  const sparks = formatSparks(sparksOf(totals) + liveSparks).padStart(6)
+  return {
+    button: drawButton(look, heatOf(recentTaps(tapper, now).length, frenzyAtFor(totals.upgrades)), isPressed, isGolden ? GOLD : undefined),
+    readout: ` ${gain} ${combo} ✦ ${sparks}`.padEnd(READOUT_WIDTH).slice(0, READOUT_WIDTH),
+  }
+}
+
+// The totals and acknowledgement the hooks last handed over, per instance, for the pointer handler.
+const lastTaps = new WeakMap<object, HelixTaps>()
+const lastAcks = new WeakMap<object, TapAck | null>()
+
 // Which row the tip line sits on, per instance: below the divider when there is one.
 const tipRows = new WeakMap<object, number>()
 
@@ -396,21 +540,49 @@ const Helix: ClientModule<Props, State> = (props, surface) => {
 
       const current = showing.get(surface)
       const sighting = current ? `${current.verb}:${current.rarity}` : null
+      const tapper = tappers.get(surface)
       const motion = showingMotion.get(surface)
-      if (current && sighting && reported.get(surface) !== sighting) {
+      const isTapStateDue = tapper !== undefined && isUnacked(tapper, lastAcks.get(surface)) && tick - tapper.postedAt / FRAME_MS >= REPOST_TICKS
+      if (tapper && isTapStateDue && tapper.menu > ackedBy(tapper, lastAcks.get(surface)).menu) {
+        surface.post({ tapState: { instance: tapper.instance, total: tapper.total, menu: tapper.menu } })
+        tappers.set(surface, { ...tapper, postedAt: tick * FRAME_MS })
+      } else if (current && sighting && reported.get(surface) !== sighting) {
         reported.set(surface, sighting)
         surface.post(current)
       } else if (motion && reportedMotion.get(surface) !== motion) {
         reportedMotion.set(surface, motion)
         surface.post({ motion })
+      } else if (tapper && isTapStateDue) {
+        surface.post({ tapState: { instance: tapper.instance, total: tapper.total, menu: tapper.menu } })
+        tappers.set(surface, { ...tapper, postedAt: tick * FRAME_MS })
+      }
+
+      // About once a second, a chance the button turns gold for a moment, once Golden taps is bought.
+      const goldenLevel = tapUpgrades.get(surface)?.golden ?? 0
+      const now = tick * FRAME_MS
+      const isRolling = tapper !== undefined && tapRegions.has(surface) && goldenLevel > 0 && tick % GOLDEN_ROLL_TICKS === 0 && now >= tapper.goldenUntil
+      if (isRolling && Math.random() < goldenChancePerSecond(goldenLevel)) {
+        tappers.set(surface, { ...(tappers.get(surface) ?? tapper), goldenUntil: now + goldenMs(tapUpgrades.get(surface)?.goldenTouch ?? 0) })
       }
     })
     // A click anywhere on the tip line moves on to the next one and restarts its 15 seconds.
+    // A click on the tap strip is a tap: sparks, heat and the combo.
     surface.onPointer(event => {
       const state = surface.state
       const isTipLineClick = event.type === 'down' && event.y === (tipRows.get(surface) ?? 1)
+      const region = tapRegions.get(surface)
+      const tapper = tappers.get(surface)
+      const isOnStrip = event.type === 'down' && region !== undefined && event.y === region.row && event.x >= region.x
+      const isMenu = isOnStrip && event.x >= region.menuX
+      const isTap = isOnStrip && !isMenu
       if (state && isTipLineClick) {
         surface.setState({ ...state, tipIndex: state.tipIndex + 1, tipChangedTick: state.tick, pinned: null })
+      } else if (state && tapper && isTap) {
+        const totals = totalsOf(tapper, normalizeTaps(lastTaps.get(surface)), lastAcks.get(surface))
+        tappers.set(surface, tap(tapper, totals, state.tick * FRAME_MS))
+        surface.setState({ ...state })
+      } else if (state && tapper && isMenu) {
+        tappers.set(surface, { ...tapper, menu: tapper.menu + 1 })
       }
     })
   }
@@ -473,6 +645,27 @@ const Helix: ClientModule<Props, State> = (props, surface) => {
   const plainCells = dividerCells(dividerWidth, tick * FRAME_MS, props.signature, props.night, base)
   const dividerLineCells = props.project ? withProjectName(plainCells, props.project.name, props.project.branch) : plainCells
 
+  if (props.taps && !tappers.has(surface)) {
+    tappers.set(surface, newTapper())
+  }
+  const tapper = props.taps ? tappers.get(surface) : undefined
+  const saved = normalizeTaps(props.taps)
+  lastTaps.set(surface, saved)
+  lastAcks.set(surface, props.tapAck ?? null)
+  tapUpgrades.set(surface, saved.upgrades)
+  const totals = tapper ? totalsOf(tapper, saved, props.tapAck) : saved
+  const liveSparks = props.startedAt === null || props.isDemo ? 0 : turnSparks(saved.upgrades, props.workMs ?? 0, props.outputTokens, props.turnTools ?? 0)
+  const sparkleWidth = rarity === 'shiny' ? 4 : 0
+  const rowWidth = cells.length + 1 + sparkleWidth + Array.from(props.text).length + props.suffix.length + ` (${stats.join(' · ')})`.length
+  const stripRoom = dividerWidth - rowWidth - 1
+  const strip = tapper && stripRoom >= STRIP_WIDTH + 2 ? stripParts(tapper, totals, liveSparks, tick * FRAME_MS, props.tapLook ?? DEFAULT_LOOK) : null
+  if (strip) {
+    const x = dividerWidth - 1 - STRIP_WIDTH
+    tapRegions.set(surface, { row: props.divider ? 2 : 0, x, menuX: x + STRIP_WIDTH - MENU_CELLS })
+  } else {
+    tapRegions.delete(surface)
+  }
+
   return (
     <Box flexDirection="column">
       {props.divider && <Text> </Text>}
@@ -507,6 +700,14 @@ const Helix: ClientModule<Props, State> = (props, surface) => {
         {rarity === 'shiny' && <Text color="#fde68a"> {sparkle(phase, 2)}</Text>}
         <Text dimColor>{props.suffix}</Text>
         <Text dimColor> ({stats.join(' · ')})</Text>
+        {strip && <Text>{' '.repeat(Math.max(1, stripRoom - STRIP_WIDTH))}</Text>}
+        {strip?.button.map(piece => (
+          <Text color={piece.color} backgroundColor={piece.backgroundColor} dimColor={piece.dimColor} bold={piece.bold} inverse={piece.inverse}>
+            {piece.text}
+          </Text>
+        ))}
+        {strip && <Text dimColor>{strip.readout}</Text>}
+        {strip && <Text dimColor>{MENU_MARK}</Text>}
       </Box>
       {tip && (
         <Box flexDirection="row">

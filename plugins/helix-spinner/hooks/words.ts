@@ -140,10 +140,71 @@ export const RARE_VERBS = [
   'Herobrine-sighting', 'Leeroy-Jenkinsing', 'Pentakilling', 'Ace-clutching', 'Rainbow-Road-racing',
 ]
 
+// Verb packs the Collector shop unlocks, in order; each joins the spinner and the dex once bought.
+// A pack with a `mode` only turns up in that phase.
+export type VerbPack = { id: string; name: string; verbs: readonly string[]; mode?: string }
+
+export const VERB_PACKS: readonly VerbPack[] = [
+  {
+    id: 'space',
+    name: 'Space',
+    verbs: ['Orbit-hopping', 'Moonwalking', 'Rocket-fueling', 'Asteroid-dodging', 'Stardust-sprinkling', 'Nebula-knitting', 'Satellite-waving', 'Zero-g-flipping', 'Crater-hopping', 'Starship-docking'],
+  },
+  {
+    id: 'kitchen',
+    name: 'Kitchen',
+    verbs: ['Souffle-rising', 'Dough-kneading', 'Pancake-flipping', 'Garlic-mincing', 'Taste-testing', 'Sauce-simmering', 'Butter-whisking', 'Sprinkle-tossing', 'Noodle-twirling', 'Bagel-toasting'],
+  },
+  {
+    id: 'pirate',
+    name: 'Pirate',
+    verbs: ['Plank-walking', 'Compass-spinning', 'Parrot-chatting', 'Cannon-loading', 'Sea-shantying', 'Anchor-hoisting', 'Doubloon-counting', 'Flag-hoisting', 'Barnacle-scraping', 'Spyglass-squinting'],
+  },
+  {
+    id: 'wizard',
+    name: 'Wizard',
+    verbs: ['Spell-slinging', 'Toadstool-tending', 'Wand-waving', 'Rune-reading', 'Cauldron-stirring', 'Familiar-feeding', 'Scroll-unrolling', 'Crystal-gazing', 'Hex-unhexing', 'Broom-sweeping'],
+  },
+  {
+    id: 'ocean',
+    name: 'Ocean',
+    verbs: ['Wave-riding', 'Tide-pooling', 'Dolphin-diving', 'Coral-gardening', 'Whale-singing', 'Shell-collecting', 'Sandcastling', 'Snorkel-bobbing', 'Seaglass-hunting', 'Jellyfish-drifting'],
+  },
+  {
+    id: 'retro',
+    name: 'Retro tech',
+    verbs: ['Dial-upping', 'Floppy-swapping', 'Screensaver-gazing', 'Mixtape-making', 'Pixel-pushing', 'Modem-screeching', 'Tamagotchi-feeding', 'Joystick-wiggling', 'CRT-degaussing', 'Tape-rewinding'],
+  },
+  {
+    id: 'slang',
+    name: 'Gen Z & Alpha',
+    mode: 'responding',
+    verbs: [
+      'Rizzing', 'Yapping', 'Aura-farming', 'Mewing', 'Mogging', 'Fanum-taxing', 'Skibidi-bopping', 'Delulu-dreaming',
+      'Main-charactering', 'Vibe-checking', 'Letting-him-cook', 'No-capping', 'Leaving-no-crumbs', 'Touching-grass',
+      'Brainrotting', 'Six-seven-ing', 'Locking-in', 'Crashing-out', 'Glazing', 'Stanning', 'Ratioing', 'Slaying',
+      'Looksmaxxing', 'Yapmaxxing', 'Sigma-grinding', 'NPC-walking', 'Ohio-ing', 'Low-taper-fading', 'Side-eyeing',
+      'Soft-launching', 'Hard-launching', 'Doomscrolling', 'Catching-the-ick', 'Rent-free-living', 'Taking-the-W',
+      'Dodging-the-L', 'Fr-fr-ing', 'Tweaking', 'Unc-checking', 'Pookie-ing',
+    ],
+  },
+]
+
 export type Rarity = 'common' | 'rare' | 'shiny'
 
-const RARE_ODDS = 150
-const SHINY_ODDS = 1024
+export const RARE_ODDS = 150
+export const SHINY_ODDS = 1024
+
+// What the Collector shop changes about a draw: how many of the odds' slots hit, and the unlocked pack verbs.
+export type VerbLuck = { rareSlots: number; shinySlots: number; packs: readonly VerbPack[] }
+
+export const NO_LUCK: VerbLuck = { rareSlots: 1, shinySlots: 1, packs: [] }
+
+// About one pick in four comes from the unlocked packs, when there are any.
+const PACK_ODDS = 4
+
+const packPick = (packVerbs: readonly string[], salt: string) =>
+  packVerbs.length > 0 && hashOf(`pack:${salt}`) % PACK_ODDS === 0 ? packVerbs[hashOf(`pack-verb:${salt}`) % packVerbs.length] : undefined
 
 // Stable for one seed, so the word holds still while the row redraws within a state.
 const hashOf = (text: string) => {
@@ -178,11 +239,18 @@ export const drawVerb = (
   seed: string,
   seasonal?: readonly string[],
   tool?: ToolGroup,
+  luck: VerbLuck = NO_LUCK,
 ): { verb: string; rarity: Rarity } => {
-  const isRare = hashOf(`rare:${mode}:${seed}`) % RARE_ODDS === 0
-  const regular = seasonalPick(seasonal, `${mode}:${seed}`) ?? (tool ? pickToolVerb(tool, seed) : pickVerb(mode, seed))
+  const isRare = hashOf(`rare:${mode}:${seed}`) % RARE_ODDS < luck.rareSlots
+  const regular =
+    seasonalPick(seasonal, `${mode}:${seed}`) ??
+    packPick(
+      luck.packs.filter(pack => pack.mode === undefined || pack.mode === mode).flatMap(pack => pack.verbs),
+      `${mode}:${seed}`,
+    ) ??
+    (tool ? pickToolVerb(tool, seed) : pickVerb(mode, seed))
   const verb = isRare ? (RARE_VERBS[hashOf(seed) % RARE_VERBS.length] ?? 'Quantum-noodling') : regular
-  const isShiny = hashOf(`shiny:${mode}:${seed}`) % SHINY_ODDS === 0
+  const isShiny = hashOf(`shiny:${mode}:${seed}`) % SHINY_ODDS < luck.shinySlots
   return { verb, rarity: isShiny ? 'shiny' : isRare ? 'rare' : 'common' }
 }
 

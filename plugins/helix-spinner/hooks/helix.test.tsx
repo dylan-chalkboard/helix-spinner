@@ -11,7 +11,38 @@ import { activeSituations, firstUnintroduced, tipAt } from './tip-rotation'
 import { ALL_RARE_MOTIONS, drawRareMotion, RARE_MOTIONS } from './rare-motions'
 import { COMPACT_MOTION, TOOL_MOTIONS } from './tool-motions'
 import { toolGroupOf } from './tools'
-import { drawVerb, RARE_VERBS, TOOL_VERBS, toPastTense, VERBS_BY_MODE, WACKY_VERBS } from './words'
+import {
+  branchRows,
+  BUTTON_STYLES,
+  BUTTON_WIDTH,
+  comboGapMs,
+  critChance,
+  critMultiplierFor,
+  depthOf,
+  drawButton,
+  formatGain,
+  frenzyAtFor,
+  HEAT_COLORS,
+  heatOf,
+  isUnlocked,
+  mergeTaps,
+  NO_TAPS,
+  normalizeLook,
+  normalizeTaps,
+  parseTapArgs,
+  requirementText,
+  sightingSparks,
+  sparksOf,
+  spentOn,
+  stepStyle,
+  turnSparks,
+  upgradeCost,
+  upgradeMax,
+  UPGRADES,
+  verbLuckOf,
+} from './taps'
+import type { Heat } from './taps'
+import { drawVerb, RARE_VERBS, TOOL_VERBS, toPastTense, VERB_PACKS, VERBS_BY_MODE, WACKY_VERBS } from './words'
 
 // A day with no holiday pack in season.
 const QUIET_DAY = new Date(2026, 7, 15).getTime()
@@ -50,6 +81,7 @@ describe('helix spinner', () => {
   }
 
   test('each state draws its own animation', async ($, on) => {
+    mock.store(on)
     mock.clock(on, { now: QUIET_DAY })
     const modes = ['thinking', 'requesting', 'responding', 'tool-input', 'tool-use'] as const
     const frames = new Set<string>()
@@ -651,6 +683,54 @@ describe('helix spinner', () => {
     expect(shiny).toBeLessThan(110)
   })
 
+  test('the Collector shop raises the odds and mixes in unlocked packs', () => {
+    const draws = (upgrades: Parameters<typeof verbLuckOf>[0]) =>
+      Array.from({ length: 20_000 }, (_, seed) => drawVerb('thinking', `turn-${seed}:0`, undefined, undefined, verbLuckOf(upgrades)))
+    const count = (list: ReturnType<typeof draws>, rarity: string) => list.filter(draw => draw.rarity === rarity).length
+    const plain = draws({})
+    const charmed = draws({ charm: 4, shinyCharm: 3 })
+    // Lucky charm 4 is five slots of 150, Shiny charm 3 is seven of 1,024.
+    expect(count(charmed, 'rare')).toBeGreaterThan(count(plain, 'rare') * 3)
+    expect(count(charmed, 'shiny')).toBeGreaterThan(count(plain, 'shiny') * 4)
+    const spaceVerbs = new Set(VERB_PACKS[0]?.verbs)
+    expect(plain.some(draw => spaceVerbs.has(draw.verb))).toBe(false)
+    const packed = draws({ packs: 1 }).filter(draw => spaceVerbs.has(draw.verb)).length
+    expect(packed).toBeGreaterThan(20_000 / 6)
+    expect(packed).toBeLessThan(20_000 / 3)
+  })
+
+  test('bounties pay for rare and shiny sightings and first finds, and packs cap', () => {
+    expect(sightingSparks({}, 'shiny', true)).toBe(0)
+    expect(sightingSparks({ bounty: 1 }, 'rare', false)).toBe(25)
+    expect(sightingSparks({ bounty: 1 }, 'shiny', false)).toBe(25 * 25)
+    expect(sightingSparks({ bounty: 1 }, 'common', true)).toBe(6)
+    expect(sightingSparks({ bounty: 1 }, 'common', false)).toBe(0)
+    expect(upgradeMax('packs')).toBe(VERB_PACKS.length)
+    expect(upgradeMax('bounty')).toBe(Infinity)
+  })
+
+  test('a tap gain fits its five cells however big it gets', () => {
+    expect([126, 1260, 18_900, 1_260_000].map(formatGain)).toEqual(['126', '1.3k', '19k', '1.3m'])
+    expect(Math.max(...[999, 9_999, 999_499, 9_999_999, 999_999_999_999].map(gain => formatGain(gain).length))).toBeLessThanOrEqual(5)
+  })
+
+  test('the Gen Z & Alpha pack only turns up while Claude is responding', () => {
+    const slang = new Set(VERB_PACKS.find(pack => pack.id === 'slang')?.verbs)
+    const luck = verbLuckOf({ packs: VERB_PACKS.length })
+    const shown = (mode: string) =>
+      Array.from({ length: 4000 }, (_, seed) => drawVerb(mode, `turn-${seed}:0`, undefined, undefined, luck).verb).filter(verb => slang.has(verb)).length
+    expect(shown('responding')).toBeGreaterThan(50)
+    expect(shown('thinking')).toBe(0)
+    expect(shown('requesting')).toBe(0)
+  })
+
+  test('every pack verb is new, so packs only add to the dex', () => {
+    const elsewhere = new Set([...Object.values(VERBS_BY_MODE).flat(), ...Object.values(TOOL_VERBS).flat(), ...RARE_VERBS, ...WACKY_VERBS])
+    const packVerbs = VERB_PACKS.flatMap(pack => pack.verbs)
+    expect(packVerbs.filter(verb => elsewhere.has(verb))).toEqual([])
+    expect(new Set(packVerbs).size).toBe(packVerbs.length)
+  })
+
   test('alerts start off and the button cycles all, rare & shiny only, off', async ($, on) => {
     mock.store(on)
     mock.clock(on, { now: QUIET_DAY })
@@ -707,6 +787,442 @@ describe('helix spinner', () => {
     await ui.pointer({ type: 'down', x: 4, y: 2, button: 'left' })
     expect(await tipText()).toBe(after)
     await ui.unmount()
+  })
+
+  const FULLSCREEN = { columns: 140, rows: 40, isFullscreen: true }
+  // At 140 columns the 50-cell strip ends a cell short of the edge: its button starts at 89, its ☰ at 138.
+  const stripTap = (ui: { pointer: (e: { type: 'down'; x: number; y: number; button: 'left' }) => Promise<void> }) =>
+    ui.pointer({ type: 'down', x: 108, y: 2, button: 'left' })
+  const mountTapper = async ($: Parameters<Parameters<typeof test>[1]>[0]) => {
+    const ui = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Spinner', props: SPINNER, viewport: FULLSCREEN })
+    await ui.resize({ columns: 140, rows: 4 })
+    return ui
+  }
+
+  test('the tap strip shows on the right only in fullscreen', async ($, on) => {
+    mock.store(on)
+    mock.clock(on, { now: QUIET_DAY })
+    const windowed = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Spinner', props: SPINNER, viewport: { ...FULLSCREEN, isFullscreen: false } })
+    await windowed.resize({ columns: 140, rows: 4 })
+    expect(await rowText(windowed)).not.toContain('☰')
+    await windowed.unmount()
+
+    const ui = await mountTapper($)
+    expect(await rowText(ui)).toMatch(/\(\d+s\) +\[  tap  \] +✦ +0 ☰/)
+    await ui.unmount()
+  })
+
+  test('every tap pays a spark, and the total is kept for the Dex', async ($, on) => {
+    mock.store(on)
+    mock.clock(on, { now: QUIET_DAY })
+    const ui = await mountTapper($)
+    await stripTap(ui)
+    expect(await rowText(ui)).toMatch(/\] +\+1 +✦ +1 ☰/)
+    await ui.advance(700)
+    await stripTap(ui)
+    expect(await rowText(ui)).toMatch(/\] +\+1 +✦ +2 ☰/)
+    await ui.pointer({ type: 'down', x: 4, y: 2, button: 'left' })
+    await ui.advance(500)
+    expect(await rowText(ui)).toMatch(/\] +✦ +2 ☰ +⎿/)
+
+    const dexPane = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Pane', requestId: 'helix-dex', props: { bodyColumns: 60, bodyRows: 30 } as never })
+    expect(await dexPane.find({ type: 'Text', text: / · 2 taps · best combo x1 · ✦ 2$/ })).toBeDefined()
+    await dexPane.unmount()
+    await ui.unmount()
+  })
+
+  test('a burst of taps in one frame, before anything else is sent, all reach the save', async ($, on) => {
+    mock.store(on)
+    mock.clock(on, { now: QUIET_DAY })
+    const ui = await mountTapper($)
+    for (let index = 0; index < 5; index++) {
+      await stripTap(ui)
+    }
+    await ui.advance(500)
+    const dexPane = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Pane', requestId: 'helix-dex', props: { bodyColumns: 60, bodyRows: 30 } as never })
+    expect(await dexPane.find({ type: 'Text', text: / · 5 taps · best combo x5 · / })).toBeDefined()
+    await dexPane.unmount()
+    await ui.unmount()
+  })
+
+  test('the tap strip stays put as the numbers change', async ($, on) => {
+    mock.store(on)
+    mock.clock(on, { now: QUIET_DAY })
+    const ui = await mountTapper($)
+    const barStart = async () => (await rowText(ui)).indexOf('✦')
+    const before = await barStart()
+    for (let index = 0; index < 12; index++) {
+      await stripTap(ui)
+      await ui.advance(50)
+      expect(await barStart()).toBe(before)
+    }
+    await ui.unmount()
+  })
+
+  test('the button goes down for a moment on each tap', async ($, on) => {
+    mock.store(on)
+    mock.clock(on, { now: QUIET_DAY })
+    const ui = await mountTapper($)
+    const label = async () => (await ui.find({ type: 'Text', text: '  tap  ', in: 'helix' }))?.props.inverse
+    await stripTap(ui)
+    expect(await label()).toBe(true)
+    await ui.advance(200)
+    expect(await label()).toBeFalsy()
+    await ui.unmount()
+  })
+
+  test('the button warms up as you tap faster, then cools back to grey', async ($, on) => {
+    mock.store(on)
+    mock.clock(on, { now: QUIET_DAY })
+    const ui = await mountTapper($)
+    const edgeColor = async () => (await ui.find({ type: 'Text', text: '[', in: 'helix' }))?.props.color
+    expect(await edgeColor()).toBeUndefined()
+    const seen: unknown[] = []
+    for (let index = 0; index < 8; index++) {
+      await stripTap(ui)
+      seen.push(await edgeColor())
+      await ui.advance(50)
+    }
+    expect(seen).toEqual([undefined, undefined, HEAT_COLORS.warm, HEAT_COLORS.warm, HEAT_COLORS.hot, HEAT_COLORS.hot, HEAT_COLORS.hot, HEAT_COLORS.frenzy])
+    await ui.advance(1500)
+    expect(await edgeColor()).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('the numbers stay plain grey, so they never outshine the spinner', async ($, on) => {
+    mock.store(on)
+    mock.clock(on, { now: QUIET_DAY })
+    const ui = await mountTapper($)
+    for (let index = 0; index < 8; index++) {
+      await stripTap(ui)
+    }
+    const readout = await ui.find({ type: 'Text', text: /✦/, in: 'helix' })
+    expect(readout?.props.dimColor).toBe(true)
+    expect(readout?.props.color).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('tapping fast multiplies sparks and builds a combo', async ($, on) => {
+    mock.store(on)
+    mock.clock(on, { now: QUIET_DAY })
+    const ui = await mountTapper($)
+    for (let index = 0; index < 8; index++) {
+      await stripTap(ui)
+      await ui.advance(50)
+    }
+    // 1 + 1 + 2 + 2 + 3 + 3 + 3 + 5 sparks.
+    expect(await rowText(ui)).toMatch(/\] +\+5 +x8 +✦ +20 /)
+    await ui.unmount()
+  })
+
+  test('/helix-tap opens the menu, and sets the style and label', async ($, on) => {
+    mock.store(on)
+    mock.clock(on, { now: QUIET_DAY })
+    const opened: string[] = []
+    on('ui.open', async (_$, e) => {
+      opened.push(e.id)
+      return { value: { isPlaced: true } } as never
+    })
+    const say = async (args: string) => ((await $.command.run({ command: 'helix-tap', args } as never)) as { text?: string }).text ?? ''
+    expect(await say('')).toBe('Tapper menu opened.')
+    expect(opened).toEqual(['helix-tap'])
+    expect(await say('button pill')).toBe('Pill costs ✦ 900. Buy it in the Looks tab of /helix-tap.')
+    expect(await say('button brackets')).toBe('Tap button: Brackets')
+    expect(await say('text boop')).toBe('Tap button label: boop')
+    const ui = await mountTapper($)
+    expect(await rowText(ui)).toMatch(/\[ boop  \] +✦/)
+    expect(await say('text default')).toBe('Tap button label: tap')
+    await ui.unmount()
+  })
+
+  test('the tapper menu shows your sparks and the button in every state', async ($, on) => {
+    mock.store(on)
+    mock.clock(on, { now: QUIET_DAY })
+    const ui = await mountTapper($)
+    for (let index = 0; index < 3; index++) {
+      await stripTap(ui)
+      await ui.advance(700)
+    }
+    const pane = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Pane', requestId: 'helix-tap', props: { bodyColumns: 70, bodyRows: 60 } as never })
+    expect(await pane.find({ type: 'Text', text: '✦ 3' })).toBeDefined()
+    expect(await pane.find({ type: 'Text', text: /3 taps · best combo x1 · ✦ 3 earned in all$/ })).toBeDefined()
+    expect(await pane.find({ type: 'Text', text: 'Brackets' })).toBeDefined()
+    // Only Brackets is owned to start, so stepping stays on it.
+    await pane.press({ key: 'style-next' })
+    expect(await pane.find({ type: 'Text', text: ' 1 of 1 owned' })).toBeDefined()
+    expect(await pane.find({ key: 'look-block' })).toBeDefined()
+    await pane.unmount()
+    await ui.unmount()
+  })
+
+  test('button looks are bought once with sparks, then worn', async ($, on) => {
+    mock.store(on, { taps: { taps: 0, bestCombo: 0, earned: 500, upgrades: {}, balance: 2 } })
+    mock.clock(on, { now: QUIET_DAY })
+    const toasts: string[] = []
+    on('ui.toast', async (_$, e) => {
+      toasts.push(e.text)
+      return {} as never
+    })
+    const pane = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Pane', requestId: 'helix-tap', props: { bodyColumns: 70, bodyRows: 60 } as never })
+    await pane.press({ key: 'look-block' })
+    expect(await pane.find({ type: 'Text', text: '✦ 400' })).toBeDefined()
+    expect(await pane.find({ type: 'Text', text: 'Block' })).toBeDefined()
+    expect(await pane.find({ type: 'Text', text: ' 2 of 2 owned' })).toBeDefined()
+    // Pill is 900: too dear, so it stays unbought.
+    await pane.press({ key: 'look-pill' })
+    expect(toasts).toContain('Not enough sparks for Pill: ✦ 500 to go.')
+    expect(await pane.find({ type: 'Text', text: '✦ 400' })).toBeDefined()
+    await pane.unmount()
+  })
+
+  test('the shop sells upgrades for sparks, and they change what a tap pays', async ($, on) => {
+    mock.store(on)
+    mock.clock(on, { now: QUIET_DAY })
+    const ui = await mountTapper($)
+    // 12 fast taps: 1 + 1 + 2 + 2 + 3 + 3 + 3 + 5 + 5 + 5 + 5 + 5 = 40 sparks.
+    for (let index = 0; index < 12; index++) {
+      await stripTap(ui)
+      await ui.advance(50)
+    }
+    await ui.advance(1500)
+    expect(await rowText(ui)).toMatch(/✦ +40 /)
+    const pane = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Pane', requestId: 'helix-tap', props: { bodyColumns: 90, bodyRows: 60 } as never })
+    await pane.press({ key: 'tab-shop' })
+    expect(await pane.find({ type: 'Text', text: '✦ STORE ✦' })).toBeDefined()
+    expect(await pane.find({ type: 'Text', text: '✦ 40 to spend' })).toBeDefined()
+    expect(await pane.find({ type: 'Text', text: 'Make every tap of the button pay more.' })).toBeDefined()
+    expect(await pane.find({ type: 'Text', text: /^─{20,}$/ })).toBeDefined()
+    expect(await pane.find({ type: 'Text', text: '+1 per tap → +2 per tap' })).toBeDefined()
+    await pane.press({ key: 'buy-strong' })
+    expect(await pane.find({ type: 'Text', text: '+2 per tap → +3 per tap' })).toBeDefined()
+    expect(await pane.find({ type: 'Text', text: '✦ 15' })).toBeDefined()
+    expect(await pane.find({ type: 'Text', text: '✦ 15 to spend' })).toBeDefined()
+    await ui.redraw(SPINNER)
+    expect(await rowText(ui)).toMatch(/✦ +15 /)
+    // Strong tap Lv 1: a slow tap now pays 2.
+    await stripTap(ui)
+    expect(await rowText(ui)).toMatch(/\+2 +✦ +17 /)
+    await pane.unmount()
+    await ui.unmount()
+  })
+
+  test('skills deeper in the tree stay locked until the one above is far enough along', async ($, on) => {
+    mock.store(on, { taps: { taps: 0, bestCombo: 0, earned: 100_000, upgrades: { strong: 3, hot: 4 }, balance: 2 } })
+    mock.clock(on, { now: QUIET_DAY })
+    const pane = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Pane', requestId: 'helix-tap', props: { bodyColumns: 120, bodyRows: 80 } as never })
+    // The Skills tab lists only what can be bought now; locked skills live on the Tree tab's map.
+    await pane.press({ key: 'tab-shop' })
+    expect(await pane.find({ key: 'buy-golden' })).toBeUndefined()
+    expect(await pane.find({ type: 'Text', text: /🔒/ })).toBeUndefined()
+    await pane.press({ key: 'tab-tree' })
+    expect(await pane.find({ type: 'Text', text: '🔒 Golden taps' })).toBeDefined()
+    expect(await pane.find({ type: 'Text', text: ' needs Hot streak 5' })).toBeDefined()
+    expect(await pane.find({ type: 'Text', text: '● Hot streak' })).toBeDefined()
+    expect(await pane.find({ type: 'Text', text: '└─ ' })).toBeDefined()
+    await pane.press({ key: 'tab-shop' })
+    await pane.press({ key: 'buy-hot' })
+    expect(await pane.find({ key: 'buy-golden' })).toBeDefined()
+    await pane.unmount()
+  })
+
+  test('Golden taps can be bought, and a golden button is painted gold over the heat', async ($, on) => {
+    mock.store(on, { taps: { taps: 0, bestCombo: 0, earned: 100_000, upgrades: { strong: 3, hot: 5 }, balance: 2 } })
+    mock.clock(on, { now: QUIET_DAY })
+    const pane = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Pane', requestId: 'helix-tap', props: { bodyColumns: 120, bodyRows: 80 } as never })
+    await pane.press({ key: 'tab-shop' })
+    await pane.press({ key: 'buy-golden' })
+    expect(await pane.find({ type: 'Text', text: /^2%\/s, pays ×10 → / })).toBeDefined()
+    await pane.unmount()
+
+    // A golden window is a roll of the dice; what it paints is not.
+    const golden = drawButton({ button: null, text: null }, 'frenzy', false, '#d4b25f')
+    expect(golden[0]?.color).toBe('#d4b25f')
+  })
+
+  test('the ☰ at the end of the strip opens the shop without stopping anything', async ($, on) => {
+    mock.store(on)
+    mock.clock(on, { now: QUIET_DAY })
+    const opened: string[] = []
+    on('ui.open', async (_$, e) => {
+      opened.push(e.id)
+      return { value: { isPlaced: true } } as never
+    })
+    const ui = await mountTapper($)
+    expect(await rowText(ui)).toMatch(/✦ +0 ☰/)
+    await ui.pointer({ type: 'down', x: 138, y: 2, button: 'left' })
+    await ui.advance(300)
+    expect(opened).toEqual(['helix-tap'])
+    // A click on the menu is not a tap.
+    expect(await rowText(ui)).toMatch(/\] +✦ +0 ☰/)
+    const pane = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Pane', requestId: 'helix-tap', props: { bodyColumns: 90, bodyRows: 60 } as never })
+    expect(await pane.find({ key: 'buy-strong' })).toBeDefined()
+    await pane.unmount()
+    await ui.unmount()
+  })
+
+  test('an upgrade you cannot afford stays unbought', async ($, on) => {
+    mock.store(on)
+    mock.clock(on, { now: QUIET_DAY })
+    const toasts: string[] = []
+    on('ui.toast', async (_$, e) => {
+      toasts.push(e.text)
+      return {} as never
+    })
+    const pane = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Pane', requestId: 'helix-tap', props: { bodyColumns: 90, bodyRows: 60 } as never })
+    await pane.press({ key: 'tab-shop' })
+    await pane.press({ key: 'buy-crit' })
+    expect(await pane.find({ type: 'Text', text: /^0% for ×10 → / })).toBeDefined()
+    expect(toasts).toContain('Not enough sparks for Crit taps: ✦ 50 to go.')
+    await pane.unmount()
+  })
+
+  test('every tool Claude runs pays a spark', async ($, on) => {
+    mock.store(on)
+    mock.clock(on, { now: QUIET_DAY })
+    on('tool.call', async () => ({ result: 'done' }) as never)
+    await $.tool.call({ tool: 'Grep', pattern: 'helix' } as never)
+    await $.tool.call({ tool: 'Read', file_path: 'x' } as never)
+    const dexPane = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Pane', requestId: 'helix-dex', props: { bodyColumns: 60, bodyRows: 30 } as never })
+    expect(await dexPane.find({ type: 'Text', text: / · ✦ 2$/ })).toBeDefined()
+    await dexPane.unmount()
+  })
+
+  test('a finished turn pays for the time Claude worked, with the Thinker upgrades', async ($, on) => {
+    mock.store(on, { taps: { xp: 0, taps: 0, bestCombo: 0, earned: 1000, upgrades: { thinking: 1 }, balance: 2 } })
+    const clock = mock.clock(on, { now: QUIET_DAY })
+    on('turn.start', async (_$, e) => ({ turnId: e.turnId }) as never)
+    on('turn.complete', async () => ({ text: 'done' }) as never)
+    on('tool.call', async () => {
+      await clock.advance(95_000)
+      return { result: 'done' } as never
+    })
+    await $.turn.start({ turnId: 't1', text: 'hi' } as never)
+    await $.tool.call({ tool: 'Bash', command: 'yarn test' } as never)
+    await $.turn.complete({ turnId: 't1', text: 'done', reason: 'answer' } as never)
+    const dexPane = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Pane', requestId: 'helix-dex', props: { bodyColumns: 60, bodyRows: 30 } as never })
+    // 1,000 earned, less 30 for Thinking pays Lv 1, plus 9 tens of seconds of work at 1 each and 1 for the tool.
+    expect(await dexPane.find({ type: 'Text', text: / · ✦ 980$/ })).toBeDefined()
+    await dexPane.unmount()
+  })
+
+  test('a turn left waiting pays nothing for the wait', async ($, on) => {
+    mock.store(on, { taps: { xp: 0, taps: 0, bestCombo: 0, earned: 1000, upgrades: { thinking: 1 }, balance: 2 } })
+    const clock = mock.clock(on, { now: QUIET_DAY })
+    on('turn.start', async (_$, e) => ({ turnId: e.turnId }) as never)
+    on('turn.complete', async () => ({ text: 'done' }) as never)
+    await $.turn.start({ turnId: 't1', text: 'hi' } as never)
+    await clock.advance(8 * 60 * 60_000)
+    await $.turn.complete({ turnId: 't1', text: 'done', reason: 'answer' } as never)
+    const dexPane = await $.ui.mount({ plugin: 'helix-spinner', surface: 'terminal', component: 'Pane', requestId: 'helix-dex', props: { bodyColumns: 60, bodyRows: 30 } as never })
+    expect(await dexPane.find({ type: 'Text', text: / · ✦ 970$/ })).toBeDefined()
+    await dexPane.unmount()
+  })
+
+  test('sparks, costs and Claude-work payouts add up', () => {
+    expect([0, 1, 2].map(level => upgradeCost('strong', level))).toEqual([25, 40, 64])
+    expect(spentOn({ strong: 2, crit: 1 })).toBe(25 + 40 + 50)
+    expect(sparksOf({ ...NO_TAPS, earned: 200, upgrades: { strong: 2 } })).toBe(135)
+    // 95 seconds of work: 9 tens; Thinking pays Lv 1 still pays 1 each (1.25 rounds down), Deep thought Lv 2 is ×1.5 past a minute.
+    expect(turnSparks({}, 95_000, 0, 0)).toBe(9)
+    expect(turnSparks({ thinking: 1, deep: 2 }, 95_000, 0, 0)).toBe(13)
+    expect(turnSparks({ tithe: 2 }, 5_000, 3_400, 0)).toBe(6)
+    // Income grows ×1.25 a level against prices at ×1.6: Toolsmith 12 pays 15 a tool.
+    expect(turnSparks({ toolsmith: 12 }, 0, 0, 1)).toBe(15)
+    // Tool chain 2 adds 10% per tool after the first: 3 tools pay 1 + 1.1 + 1.2.
+    expect(turnSparks({ chain: 2 }, 0, 0, 3)).toBe(3)
+    expect(turnSparks({ toolsmith: 5, chain: 2 }, 0, 0, 3)).toBe(9)
+    // The climb tops out at double pay: past that, one more tool adds exactly 2.
+    expect(turnSparks({ chain: 20 }, 0, 0, 51) - turnSparks({ chain: 20 }, 0, 0, 50)).toBe(2)
+    // Overclock and Deep thought multiply tools along with thinking.
+    expect(turnSparks({ overclock: 2, deep: 2 }, 60_000, 0, 4)).toBe(22)
+    // Work past 30 minutes in one turn pays nothing more.
+    expect(turnSparks({}, 8 * 60 * 60_000, 0, 0)).toBe(turnSparks({}, 30 * 60_000, 0, 0))
+    expect(comboGapMs(0)).toBe(600)
+    expect(comboGapMs(10)).toBe(2000)
+    expect(critChance(0)).toBe(0)
+    expect(critChance(20)).toBe(0.5)
+    // Capped upgrades stop at their max even if a save holds more.
+    expect(comboGapMs(50)).toBe(2000)
+    expect(critChance(1000)).toBe(0.5)
+    expect(upgradeMax('steady')).toBe(10)
+    expect(upgradeMax('strong')).toBe(Infinity)
+    // Deep focus 2 brings Deep thought's marks in to 30s and 3m.
+    expect(turnSparks({ deep: 2 }, 30_000, 0, 0)).toBe(3)
+    expect(turnSparks({ deep: 2, deepFocus: 2 }, 30_000, 0, 0)).toBe(4)
+    expect(turnSparks({ deep: 2, deepFocus: 2 }, 180_000, 0, 0)).toBe(36)
+  })
+
+  test('two windows saving at once keep the larger of every count', () => {
+    const a = { taps: 90, bestCombo: 12, earned: 300, upgrades: { strong: 2 }, looks: ['block'] }
+    const b = { taps: 120, bestCombo: 30, earned: 260, upgrades: { strong: 1, crit: 3 }, looks: ['pill'] }
+    expect(mergeTaps(a, b)).toEqual({ taps: 120, bestCombo: 30, earned: 300, upgrades: { strong: 2, crit: 3 }, looks: ['block', 'pill'], balance: 2 })
+    expect(normalizeTaps({ taps: 54, bestCombo: 54, balance: 2 })).toEqual({ taps: 54, bestCombo: 54, earned: 0, upgrades: {}, looks: [], balance: 2 })
+    // A save from before the current balance starts over.
+    expect(normalizeTaps({ xp: 203_712, taps: 1371, bestCombo: 167, earned: 25_067_966, upgrades: { milestone: 13 } })).toEqual(NO_TAPS)
+  })
+
+  test('every button style is nine cells in every state, and each one is its own shape', () => {
+    const heats: Heat[] = ['cool', 'warm', 'hot', 'frenzy']
+    for (const style of BUTTON_STYLES) {
+      for (const text of [null, 'a', 'hello']) {
+        for (const heat of heats) {
+          for (const isPressed of [false, true]) {
+            const pieces = drawButton({ button: style.id, text }, heat, isPressed)
+            expect(Array.from(pieces.map(piece => piece.text).join('')).length).toBe(BUTTON_WIDTH)
+          }
+        }
+      }
+    }
+    const shapes = BUTTON_STYLES.map(style => JSON.stringify(drawButton({ button: style.id, text: null }, 'cool', false)))
+    expect(new Set(shapes).size).toBe(BUTTON_STYLES.length)
+  })
+
+  test('styles are worn once bought, and old saved looks still load', () => {
+    expect(parseTapArgs('button block', ['block'])).toEqual({ action: 'button', button: 'block' })
+    expect(parseTapArgs('button brackets', [])).toEqual({ action: 'button', button: 'brackets' })
+    expect(parseTapArgs('button block', [])).toEqual({ action: 'unowned', name: 'Block', price: 100 })
+    expect(parseTapArgs('button nope', []).action).toBe('invalid')
+    expect(parseTapArgs('text toolong', []).action).toBe('invalid')
+    expect(parseTapArgs('text "hi!"', [])).toEqual({ action: 'text', text: 'hi!' })
+    expect(stepStyle(null, ['block', 'round'], 1).id).toBe('block')
+    expect(stepStyle('round', ['block', 'round'], 1).id).toBe('brackets')
+    expect(stepStyle(null, ['block', 'round'], -1).id).toBe('round')
+    expect(sparksOf({ ...NO_TAPS, earned: 1000, looks: ['block', 'round'] })).toBe(1000 - 100 - 300)
+    expect(normalizeLook({ icon: '☆', button: 'text:hi' })).toEqual({ button: null, text: null })
+    expect(normalizeLook({ button: 'pill', text: 'boop' })).toEqual({ button: 'pill', text: 'boop' })
+  })
+
+  test('the heat climbs with the pace, and Overdrive brings the frenzy sooner', () => {
+    expect([1, 3, 5, 8].map(taps => heatOf(taps))).toEqual(['cool', 'warm', 'hot', 'frenzy'])
+    expect(heatOf(6, frenzyAtFor({}))).toBe('hot')
+    expect(heatOf(6, frenzyAtFor({ overdrive: 1 }))).toBe('frenzy')
+  })
+
+  test('the tree opens skills by their parents, and the strip aims at the cheapest one open', () => {
+    expect(isUnlocked({}, 'strong')).toBe(true)
+    expect(isUnlocked({ strong: 2 }, 'hot')).toBe(false)
+    expect(isUnlocked({ strong: 3 }, 'hot')).toBe(true)
+    expect(isUnlocked({ golden: 2 }, 'golden')).toBe(true)
+    expect(depthOf('goldenTouch')).toBe(3)
+    // Each branch draws as a tree: Strong tap's two children fork, and Hot streak's line runs past its own children.
+    expect(branchRows('tapper').map(row => `${row.prefix}${row.upgrade.id}`)).toEqual([
+      'strong',
+      '├─ hot',
+      '│  └─ golden',
+      '│     └─ goldenTouch',
+      '└─ steady',
+      '   └─ overdrive',
+    ])
+    expect(requirementText('golden')).toBe('needs Hot streak 5')
+    // Every skill but the roots hangs from one listed before it, in its own branch.
+    UPGRADES.forEach((upgrade, index) => {
+      const parent = UPGRADES.findIndex(other => other.id === upgrade.requires?.id)
+      expect(upgrade.requires === undefined || (parent >= 0 && parent < index && UPGRADES[parent]?.path === upgrade.path)).toBe(true)
+    })
+    // Capstones change the rules once: crits, the work cap, and bounties.
+    expect(critMultiplierFor({ bigCrits: 1 })).toBe(15)
+    expect(turnSparks({ marathon: 1 }, 8 * 60 * 60_000, 0, 0)).toBe(turnSparks({}, 60 * 60_000, 0, 0) * 2)
+    expect(sightingSparks({ bounty: 1, completionist: 1 }, 'rare', false)).toBe(50)
   })
 
   test('a divider line separates the live spinner from the response', async ($, on) => {
