@@ -17,6 +17,8 @@ export const VERBS_BY_MODE: Record<string, readonly string[]> = {
     'Pause-menuing', 'Skill-tree-pondering', 'Cutscene-watching', 'Boss-pattern-studying',
     'Redstone-engineering', 'Enderman-staring', 'Jungle-pathing', 'Minimap-checking', 'Eco-rounding', 'Bonfire-resting',
     'Git-gudding',
+    'Sherlock-deducing', 'Jedi-mind-tricking', 'Upside-down-pondering', 'Inception-layering', 'Matrix-decoding', 'Riddler-riddling',
+    'Spidey-sensing', 'Hogwarts-sorting', 'Bat-computing', 'Wonka-dreaming', 'Lasso-believing', 'Deep-Thought-computing',
   ],
   requesting: [
     'Skedaddling', 'Gallivanting', 'Moseying', 'Hobnobbing', 'Schmoozing', 'Lickety-splitting',
@@ -32,6 +34,8 @@ export const VERBS_BY_MODE: Record<string, readonly string[]> = {
     'Ledge-grabbing', 'Speedrunning', 'Kart-drifting', 'Lag-spiking',
     'Battle-bus-dropping', 'Storm-dodging', 'Nether-portaling', 'Warthog-jumping', 'Rushing-B', 'Tower-diving',
     'Vent-hopping', 'Air-dribbling', 'Boost-stealing',
+    'Hyperspace-jumping', 'Millennium-Falconing', 'Bat-signaling', 'Portkeying', 'TARDIS-hopping', 'Floo-powdering',
+    'Web-slinging', 'Phoning-home', 'Hoverboarding', 'Flux-capacitoring', 'Ruby-slipper-clicking', 'Mystery-Machining',
   ],
   responding: [
     'Jibber-jabbering', 'Yammering', 'Chortling', 'Bloviating', 'Gobbledygooking', 'Razzle-dazzling',
@@ -48,6 +52,8 @@ export const VERBS_BY_MODE: Record<string, readonly string[]> = {
     'Trash-talking', 'Hey-listening', 'Lore-dumping', 'Text-boxing', 'Victory-dancing', 'Emoting',
     'Achievement-unlocking', 'Leveling-up', 'High-scoring', 'Cutscening',
     'Flossing', 'Default-dancing', 'Victory-royaling', 'Cortana-chatting', 'GG-typing', 'All-chatting', 'Villager-hmming',
+    'Mic-dropping', 'Yoda-speaking', 'Spoiler-alerting', 'Lip-syncing', 'Rickrolling', 'Bob-Rossing',
+    'Kermit-flailing', 'Dad-joking', 'Jazz-handing', 'Grooting', 'Muppet-singing', 'Ted-talking',
   ],
   'tool-input': [
     'Finagling', 'Fiddle-faddling', 'Thingamajigging', 'Whatchamacalliting', 'Rigmaroling',
@@ -62,6 +68,8 @@ export const VERBS_BY_MODE: Record<string, readonly string[]> = {
     'Loadout-tweaking', 'Inventory-tetrising', 'Crafting', 'Respeccing', 'Gear-swapping', 'Cartridge-blowing',
     'Controller-calibrating', 'Hotkey-binding', 'Mod-installing', 'Character-creating',
     'Block-placing', 'Box-building', 'Ward-placing', 'Bomb-planting', 'Spray-pattern-practicing',
+    'Q-branching', 'Lightsaber-tuning', 'Utility-belt-buckling', 'Iron-Man-suiting', 'Sonic-screwdrivering', 'Ghost-trapping',
+    'Inspector-Gadgeting', 'Wallace-and-Gromiting', 'Proton-pack-strapping', 'Pip-Boy-tapping',
   ],
   'tool-use': [
     'Hornswoggling', 'Kerplunking', 'Kablooeying', 'Spelunking', 'Snorkeling', 'Shenaniganing',
@@ -81,6 +89,8 @@ export const VERBS_BY_MODE: Record<string, readonly string[]> = {
     'Spartan-lasering', 'Plasma-sticking', 'Energy-swording', 'Quickscoping', 'No-scoping', 'Killstreaking',
     'Musty-flicking', 'Flip-resetting', 'Demoing', 'Last-hitting', 'Ganking', 'Baron-stealing',
     'Jiggle-peeking', 'AWPing', 'Defusing', 'T-spinning', 'Pokéball-throwing', 'Power-pelleting',
+    'Hulk-smashing', 'Super-Saiyaning', 'Thor-hammering', 'Avengers-assembling', 'Ghostbusting', 'Force-pushing',
+    'Shield-throwing', 'Web-shooting', 'Expelliarmusing', 'Pokémon-evolving', 'Kaiju-stomping', 'Death-Star-blasting',
   ],
 }
 
@@ -293,6 +303,9 @@ const IRREGULAR_PAST: Record<string, string> = {
   catching: 'caught',
   Headshotting: 'Headshot',
   casting: 'cast',
+  slinging: 'slung',
+  speaking: 'spoke',
+  shooting: 'shot',
 }
 
 const VOWELS = 'aeiou'
